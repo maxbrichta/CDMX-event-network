@@ -217,8 +217,10 @@ textarea{resize:vertical;font-family:var(--font-data);font-size:12px;line-height
   <div class="tools">
     <button class="btn primary" id="b-add">Add event</button>
     <button class="btn" id="b-import">Import CSV</button>
+    <button class="btn" id="b-reload" hidden>Reload sheet</button>
     <button class="btn" id="b-geo">Geocode</button>
     <button class="btn" id="b-export">Export</button>
+    <button class="btn" id="b-src">Data source</button>
     <button class="btn" id="b-help">?</button>
     <button class="btn" id="b-theme" aria-label="Toggle theme">◐</button>
   </div>
@@ -273,6 +275,7 @@ textarea{resize:vertical;font-family:var(--font-data);font-size:12px;line-height
       <p class="note">* These basemaps reject requests with no referer header, so they only work when the file is served over <code>localhost</code> or a real domain — not opened straight from disk.</p>
       <p class="note">Rows marked <code>example</code> in the source column are seed data — coordinates are approximate and the events are placeholders. Replace them with your own fieldwork and re-geocode from the address.</p>
       <p class="note">Everything lives in this browser's local storage. Export before clearing site data or moving machines.</p>
+      <p class="note" id="src-note" hidden></p>
       <button class="btn" id="b-reset">Reset to seed rows</button>
     </div>
   </aside>
@@ -299,6 +302,95 @@ var STORE = 'circuito-rc-v1';
 /* Bumped automatically whenever you publish a standalone copy. Viewers whose
    stored stamp doesn't match get the newly published rows instead of a stale cache. */
 var SEED_STAMP = 'working-copy';
+
+/* ---------------------------------------------------------------
+   SHARED DATA SOURCE
+   When a published-sheet CSV URL is set, the sheet is the source of
+   truth: the map reads it on every load, so collaborators' entries
+   appear without anyone republishing the file. Both URLs are baked
+   into the published copy, so the hosted map stays connected.
+----------------------------------------------------------------*/
+var SHEET_URL = '';   // published Google Sheet, CSV output
+var FORM_URL  = '';   // Google Form collaborators submit through
+
+function sheetUrl(){
+  try{ var v = localStorage.getItem(STORE+'-sheet'); if(v!==null) return v; }catch(e){}
+  return SHEET_URL;
+}
+function formUrl(){
+  try{ var v = localStorage.getItem(STORE+'-form'); if(v!==null) return v; }catch(e){}
+  return FORM_URL;
+}
+var sheetMode = false;
+var sheetFetchedAt = null;
+
+/* Google Form question titles become the sheet's headers, and nobody types
+   them exactly. Match loosely, in both languages, and ignore the rest. */
+var HEADER_ALIASES = {
+  venue:   ['venue','lugar','sede','espacio','place','nombre del lugar','nombre','site'],
+  address: ['address','direccion','calle','domicilio','ubicacion'],
+  colonia: ['colonia','neighborhood','neighbourhood','barrio','zona'],
+  lat:     ['lat','latitude','latitud'],
+  lng:     ['lng','lon','long','longitude','longitud'],
+  network: ['network','organizer','organiser','organizador','colectivo','collective','red','host','grupo','quien organiza'],
+  event:   ['event','evento','actividad','nombre del evento','event name'],
+  day:     ['day','dia','day of week','dia de la semana'],
+  time:    ['time','hora','start time','hora de inicio'],
+  cadence: ['cadence','frequency','frecuencia','periodicidad','cada cuando'],
+  access:  ['access','acceso','entry','entrada'],
+  source:  ['source','fuente','link','url','referencia'],
+  notes:   ['notes','notas','comments','comentarios','observaciones']
+};
+var APPROVED_ALIASES = ['approved','aprobado','publish','publicar','status','estado','revisado','ok'];
+
+function normKey(s){
+  return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+}
+function matchHeader(h){
+  var n = normKey(h);
+  if(!n) return null;
+  for(var col in HEADER_ALIASES){
+    var al = HEADER_ALIASES[col];
+    for(var i=0;i<al.length;i++){
+      if(n === al[i]) return col;
+    }
+  }
+  for(var col2 in HEADER_ALIASES){
+    var al2 = HEADER_ALIASES[col2];
+    for(var j=0;j<al2.length;j++){
+      if(n.indexOf(al2[j])>=0) return col2;
+    }
+  }
+  return null;
+}
+function isApprovedHeader(h){
+  var n = normKey(h);
+  return APPROVED_ALIASES.indexOf(n)>=0;
+}
+function approvedValue(v){
+  var n = normKey(v);
+  if(n==='') return false;
+  return ['yes','y','true','1','si','x','ok','approved','aprobado','publicado','listo','done'].indexOf(n)>=0;
+}
+
+/* Accept whatever URL the user pastes and turn it into one a browser can
+   actually fetch. The /export?format=csv endpoint redirects to a host with
+   no CORS headers, so it is rewritten to the gviz endpoint instead. */
+function normalizeSheetUrl(u){
+  u = String(u||'').trim();
+  if(!u) return '';
+  if(/\/spreadsheets\/d\/e\//.test(u)){            // already a published-to-web link
+    if(!/output=csv/.test(u)) u += (u.indexOf('?')<0?'?':'&') + 'output=csv';
+    return u;
+  }
+  var m = u.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if(m){
+    var gid = (u.match(/[#&?]gid=([0-9]+)/)||[])[1];
+    return 'https://docs.google.com/spreadsheets/d/'+m[1]+'/gviz/tq?tqx=out:csv'+(gid?'&gid='+gid:'');
+  }
+  return u;
+}
 
 var SEED = [
   {venue:'Parque México',address:'Av. México s/n, Hipódromo',colonia:'Hipódromo',lat:19.4114,lng:-99.1716,network:'Run clubs',event:'Weekday morning run (example)',day:'Tue',time:'07:00',cadence:'weekly',access:'open',source:'example',notes:'Seed row — replace with observed data.'},
@@ -338,7 +430,74 @@ function load(){
   rows = SEED.map(function(r){ return Object.assign({}, r); });
 }
 function save(){
+  if(sheetMode) return;   // the sheet owns the data; don't cache a divergent copy
   try{ localStorage.setItem(STORE, JSON.stringify({stamp:SEED_STAMP, rows:rows})); }catch(e){}
+}
+
+/* ---------------------------------------------------------------
+   READING THE SHEET
+----------------------------------------------------------------*/
+async function refreshFromSheet(quiet){
+  var raw = sheetUrl();
+  if(!raw) return;
+  var url = normalizeSheetUrl(raw);
+  if(!quiet) status('Reading the sheet…', true);
+  try{
+    var res = await fetch(url + (url.indexOf('?')<0?'?':'&') + 'cb=' + Date.now(), {cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var text = await res.text();
+    var grid = parseCSV(text);
+    if(grid.length < 2) throw new Error('empty sheet');
+
+    var head = grid[0];
+    var map_ = {}, approvedAt = -1;
+    head.forEach(function(h,i){
+      if(isApprovedHeader(h)){ approvedAt = i; return; }
+      var col = matchHeader(h);
+      if(col && map_[col]===undefined) map_[col] = i;
+    });
+    if(map_.venue===undefined && map_.event===undefined){
+      throw new Error('no venue or event column found');
+    }
+
+    var out = [];
+    grid.slice(1).forEach(function(g){
+      if(approvedAt>=0 && !approvedValue(g[approvedAt])) return;
+      var o = {};
+      COLS.forEach(function(c){
+        var i = map_[c];
+        o[c] = (i===undefined || g[i]==null) ? '' : String(g[i]).trim();
+      });
+      if(!o.network) o.network = 'Unsorted';
+      if(o.venue || o.event) out.push(o);
+    });
+
+    rows = out;
+    sheetFetchedAt = new Date();
+    renderNets(); render();
+    if(!quiet) status('Loaded '+rows.length+' row'+(rows.length===1?'':'s')+' from the sheet.');
+    else status(null);
+    sheetBanner(null);
+  }catch(e){
+    sheetBanner(e.message||String(e));
+    if(!quiet) status(null);
+  }
+}
+
+function sheetBanner(err){
+  var el = document.getElementById('tilewarn');
+  if(!err) return;
+  el.innerHTML =
+    '<b>Couldn\'t read the sheet</b>'+
+    'The map is showing its built-in rows instead. Reason: <code>'+esc(err)+'</code>.<br>'+
+    'In the sheet, go to <b>File &rarr; Share &rarr; Publish to web</b>, choose the tab, pick '+
+    '<b>Comma-separated values (.csv)</b>, publish, and paste that link into Data source. '+
+    'A plain <code>/edit</code> link only works if the sheet is also shared with anyone who has the link.'+
+    '<div class="row-end"><button class="btn primary" id="w-src">Data source</button>'+
+    '<button class="btn" id="w-x">Dismiss</button></div>';
+  el.hidden = false;
+  el.querySelector('#w-src').addEventListener('click', function(){ hideTileWarning(); sourcePanel(); });
+  el.querySelector('#w-x').addEventListener('click', hideTileWarning);
 }
 
 /* ---------------------------------------------------------------
@@ -655,9 +814,12 @@ function drawTable(){
     var sw = '<td class="num"><span class="swatch" style="background:'+colorOf(r.network)+'"></span></td>';
     var cells = COLS.map(function(c){
       var cls = (c==='lat'||c==='lng') ? ' class="num"' : '';
-      return '<td'+cls+' contenteditable="true" data-i="'+i+'" data-k="'+c+'">'+esc(r[c]||'')+'</td>';
+      // In sheet mode the sheet is authoritative, so the table only displays.
+      var edit = sheetMode ? '' : ' contenteditable="true" data-i="'+i+'" data-k="'+c+'"';
+      return '<td'+cls+edit+'>'+esc(r[c]||'')+'</td>';
     }).join('');
-    tr.innerHTML = sw + cells + '<td><button class="del" data-del="'+i+'" title="Delete row">×</button></td>';
+    tr.innerHTML = sw + cells +
+      (sheetMode ? '<td></td>' : '<td><button class="del" data-del="'+i+'" title="Delete row">×</button></td>');
     tb.appendChild(tr);
   });
   t.appendChild(tb);
@@ -774,6 +936,10 @@ async function geocodeMissing(){
   }
   save(); renderNets(); render();
   status('Geocoded '+done+' row'+(done===1?'':'s')+(failed?' · '+failed+' not found — fill lat/lng by hand':''));
+  // Sheet-backed rows aren't saved anywhere, so hand the results back for pasting.
+  if(sheetMode && done){
+    coordsPanel(todo.map(function(x){ return x.r; }).filter(function(r){ return r.lat && r.lng; }));
+  }
 }
 
 /* ---------------------------------------------------------------
@@ -894,6 +1060,13 @@ async function exportStandalone(btn){
     src = src.replace(/var SEED_STAMP = '[^']*';/, function(){
       return "var SEED_STAMP = 'pub-" + Date.now() + "';";
     });
+    // Carry the shared source into the published copy so the hosted map stays connected.
+    src = src.replace(/var SHEET_URL = '[^']*';/, function(){
+      return "var SHEET_URL = " + JSON.stringify(sheetUrl()) + ";";
+    });
+    src = src.replace(/var FORM_URL  = '[^']*';/, function(){
+      return "var FORM_URL  = " + JSON.stringify(formUrl()) + ";";
+    });
     download('circuito-publicado.html', src, 'text/html;charset=utf-8');
     status('Built a standalone copy with '+rows.length+' rows baked in.');
   }catch(e){
@@ -931,6 +1104,92 @@ function exportPanel(){
     download('circuito-roma-condesa.geojson', toGeoJSON(visible()), 'application/geo+json'); });
 }
 
+function sourcePanel(){
+  var p = panel(
+    '<h2>Data source</h2>'+
+    '<p class="sub">Point the map at a published Google Sheet and the sheet becomes the source of truth — everyone sees entries as soon as the sheet has them, with nothing to republish.</p>'+
+    '<label class="fld" style="margin-bottom:10px">Published sheet CSV link'+
+      '<input id="s-sheet" placeholder="https://docs.google.com/spreadsheets/d/e/…/pub?output=csv"></label>'+
+    '<label class="fld" style="margin-bottom:10px">Google Form link (optional)'+
+      '<input id="s-form" placeholder="https://docs.google.com/forms/d/e/…/viewform"></label>'+
+    '<p class="sub" style="margin:0 0 4px"><b>Setting up the sheet</b></p>'+
+    '<ul class="guide" style="margin-top:0">'+
+      '<li>Make a sheet whose first row holds the column names: <code>'+COLS.join(', ')+'</code>. Spanish headers work too — <code>lugar</code>, <code>dirección</code>, <code>colonia</code>, <code>organizador</code> and so on are recognised.</li>'+
+      '<li>Add an <code>approved</code> column (or <code>aprobado</code>) if you want to vet entries. When that column exists, only rows marked yes, sí, x or true appear on the map. Leave the column out entirely and everything shows.</li>'+
+      '<li>Publish it: <b>File &rarr; Share &rarr; Publish to web</b>, select the tab, choose <b>Comma-separated values (.csv)</b>, then paste the link above.</li>'+
+      '<li>For a form, build it in Google Forms with question titles matching the column names, send responses to this sheet, and paste the form link above. Collaborators then get a Submit button instead of the editing tools.</li>'+
+    '</ul>'+
+    '<div class="row-end">'+
+      '<button class="btn" id="s-clear">Disconnect</button>'+
+      '<button class="btn" data-x>Cancel</button>'+
+      '<button class="btn primary" id="s-save">Save &amp; load</button>'+
+    '</div>'
+  );
+  p.querySelector('#s-sheet').value = sheetUrl();
+  p.querySelector('#s-form').value = formUrl();
+  p.querySelector('[data-x]').addEventListener('click', function(){ p.remove(); });
+  p.querySelector('#s-clear').addEventListener('click', function(){
+    try{ localStorage.setItem(STORE+'-sheet',''); localStorage.setItem(STORE+'-form',''); }catch(e){}
+    p.remove();
+    sheetMode = false; applyMode(); load(); renderNets(); render();
+    status('Disconnected — back to the local working copy.');
+  });
+  p.querySelector('#s-save').addEventListener('click', function(){
+    var s = p.querySelector('#s-sheet').value.trim();
+    var f = p.querySelector('#s-form').value.trim();
+    try{ localStorage.setItem(STORE+'-sheet', s); localStorage.setItem(STORE+'-form', f); }catch(e){}
+    p.remove();
+    sheetMode = !!s; applyMode();
+    if(s) refreshFromSheet(false); else { load(); renderNets(); render(); }
+  });
+}
+
+/* Switches the interface between the local working copy and sheet-backed mode. */
+function applyMode(){
+  var connected = sheetMode;
+  var f = formUrl();
+  document.getElementById('b-import').hidden = connected;
+  document.getElementById('b-reload').hidden = !connected;
+  var add = document.getElementById('b-add');
+  add.textContent = connected ? (f ? 'Submit a venue' : 'Add in the sheet') : 'Add event';
+  document.getElementById('b-geo').textContent = connected ? 'Fill coords' : 'Geocode';
+  document.getElementById('b-reset').hidden = connected;
+  var src = document.getElementById('src-note');
+  if(connected){
+    src.hidden = false;
+    src.innerHTML = 'Connected to a shared sheet' +
+      (sheetFetchedAt ? ' · read at '+sheetFetchedAt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '') +
+      '. Edits belong in the sheet, not here.';
+  } else {
+    src.hidden = true;
+  }
+}
+
+function coordsPanel(list){
+  var csv = 'venue,address,lat,lng\n' + list.map(function(r){
+    return [r.venue, r.address, r.lat, r.lng].map(function(v){
+      v = String(v==null?'':v);
+      return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v;
+    }).join(',');
+  }).join('\n');
+  var p = panel(
+    '<h2>Coordinates to paste back</h2>'+
+    '<p class="sub">These were looked up just now and live only in this browser. Paste the lat and lng into the matching rows of the sheet so everyone else gets them too, and so nobody re-runs the lookups.</p>'+
+    '<textarea rows="9" id="c-text" readonly></textarea>'+
+    '<div class="row-end"><button class="btn" id="c-copy">Copy</button>'+
+    '<button class="btn primary" data-x>Done</button></div>'
+  );
+  p.querySelector('#c-text').value = csv;
+  p.querySelector('[data-x]').addEventListener('click', function(){ p.remove(); });
+  p.querySelector('#c-copy').addEventListener('click', function(){
+    var ta = p.querySelector('#c-text');
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(csv).then(function(){ status('Copied'); },
+        function(){ ta.select(); });
+    } else { ta.select(); }
+  });
+}
+
 function helpPanel(){
   panel(
     '<h2>Field guide</h2>'+
@@ -966,10 +1225,19 @@ document.getElementById('b-fit').addEventListener('click', function(){
   if(!vs.length){ status('Nothing to zoom to.'); return; }
   map.fitBounds(L.latLngBounds(vs.map(function(v){ return [v.lat,v.lng]; })).pad(0.18));
 });
-document.getElementById('b-add').addEventListener('click', addPanel);
+document.getElementById('b-add').addEventListener('click', function(){
+  if(!sheetMode){ addPanel(); return; }
+  var f = formUrl();
+  if(f) window.open(f, '_blank', 'noopener');
+  else status('Add the row in the shared sheet — the map reads from it.');
+});
 document.getElementById('b-import').addEventListener('click', importPanel);
 document.getElementById('b-export').addEventListener('click', exportPanel);
 document.getElementById('b-help').addEventListener('click', helpPanel);
+document.getElementById('b-src').addEventListener('click', sourcePanel);
+document.getElementById('b-reload').addEventListener('click', function(){
+  refreshFromSheet(false).then(applyMode);
+});
 document.getElementById('b-geo').addEventListener('click', geocodeMissing);
 document.getElementById('b-reset').addEventListener('click', function(){
   rows = SEED.map(function(r){ return Object.assign({},r); });
@@ -1008,12 +1276,18 @@ bmSel.addEventListener('change', function(e){
 
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', retile);
 
-load();
+sheetMode = !!sheetUrl();
+// Sheet-backed: show the baked rows immediately, then replace them when the
+// sheet answers, so the map is never blank while the network is working.
+if(sheetMode) rows = SEED.map(function(r){ return Object.assign({}, r); });
+else load();
 applyBasemap();
 retile();
+applyMode();
 renderNets();
 renderDays();
 render();
+if(sheetMode) refreshFromSheet(true).then(applyMode);
 if(window.innerWidth<=820) document.getElementById('rail').hidden = true;
 })();
 </script>
