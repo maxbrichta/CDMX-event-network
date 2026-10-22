@@ -247,6 +247,8 @@ textarea{resize:vertical;font-family:var(--font-data);font-size:12px;line-height
       </div>
     </div>
 
+    <div id="extras"></div>
+
     <div class="rail-sec">
       <h2>Weekly rhythm</h2>
       <div class="bars" id="bars"></div>
@@ -310,7 +312,7 @@ var SEED_STAMP = 'working-copy';
    appear without anyone republishing the file. Both URLs are baked
    into the published copy, so the hosted map stays connected.
 ----------------------------------------------------------------*/
-var SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTTMLUhzKX7RTr7osLJvfem6ENmReYq9vpwat0a0t9qz32oxuhlLg49POLyt-hNmO3cBf6CplAXlVJD/pub?gid=1960038550&single=true&output=csv';   // published Google Sheet, CSV output
+var SHEET_URL = '';   // published Google Sheet, CSV output
 var FORM_URL  = '';   // Google Form collaborators submit through
 
 function sheetUrl(){
@@ -347,23 +349,26 @@ function normKey(s){
   return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'')
     .toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
 }
-function matchHeader(h){
+function matchHeaderExact(h){
+  var n = normKey(h);
+  if(!n) return null;
+  for(var col in HEADER_ALIASES){
+    if(HEADER_ALIASES[col].indexOf(n) >= 0) return col;
+  }
+  return null;
+}
+function matchHeaderLoose(h){
   var n = normKey(h);
   if(!n) return null;
   for(var col in HEADER_ALIASES){
     var al = HEADER_ALIASES[col];
-    for(var i=0;i<al.length;i++){
-      if(n === al[i]) return col;
-    }
-  }
-  for(var col2 in HEADER_ALIASES){
-    var al2 = HEADER_ALIASES[col2];
-    for(var j=0;j<al2.length;j++){
-      if(n.indexOf(al2[j])>=0) return col2;
+    for(var j=0;j<al.length;j++){
+      if(n.indexOf(al[j]) >= 0) return col;
     }
   }
   return null;
 }
+function matchHeader(h){ return matchHeaderExact(h) || matchHeaderLoose(h); }
 function isApprovedHeader(h){
   var n = normKey(h);
   return APPROVED_ALIASES.indexOf(n)>=0;
@@ -410,9 +415,51 @@ var PALETTE = ['#D81B60','#2D7DD2','#E8A33D','#2F9E6E','#8A5CF5','#D9544D','#15A
 var rows = [];
 var netColor = {};
 var ui = {
-  q:'', offNets:{}, offDays:{},
+  q:'', offNets:{}, offDays:{}, offExtras:{},
   ties:false, size:true, labels:false, view:'map'
 };
+
+/* ---------------------------------------------------------------
+   USER-ADDED COLUMNS
+   Any sheet column the map doesn't recognise is kept on the row under
+   _x and turned into its own filter group, provided it reads like a
+   category rather than free text. Cells may hold several values
+   separated by commas or semicolons.
+----------------------------------------------------------------*/
+var EXTRA_MAX_VALUES = 24;
+
+function extraValues(r, field){
+  var v = (r._x && r._x[field]) || '';
+  if(!String(v).trim()) return [];
+  return String(v).split(/[;,/|]/).map(function(s){ return s.trim(); })
+    .filter(function(s){ return s.length > 0; });
+}
+/* Returns {field: [value, …]} for every extra column shaped like a category. */
+function extraFields(){
+  var seen = {};
+  rows.forEach(function(r){
+    if(!r._x) return;
+    for(var f in r._x){
+      if(!seen[f]) seen[f] = {};
+      extraValues(r, f).forEach(function(v){ seen[f][v] = (seen[f][v]||0) + 1; });
+    }
+  });
+  var out = {};
+  Object.keys(seen).forEach(function(f){
+    var vals = Object.keys(seen[f]);
+    if(vals.length === 0 || vals.length > EXTRA_MAX_VALUES) return;  // free text
+    vals.sort(function(a,b){ return seen[f][b] - seen[f][a] || a.localeCompare(b); });
+    out[f] = vals;
+  });
+  return out;
+}
+function extraCounts(field){
+  var c = {};
+  rows.forEach(function(r){
+    extraValues(r, field).forEach(function(v){ c[v] = (c[v]||0) + 1; });
+  });
+  return c;
+}
 
 /* ---------------------------------------------------------------
    STORAGE
@@ -437,24 +484,95 @@ function save(){
 /* ---------------------------------------------------------------
    READING THE SHEET
 ----------------------------------------------------------------*/
+/* Google serves published CSV through a redirect to a host that sends no
+   cross-origin header, so fetch() fails on links that work fine when clicked.
+   The gviz endpoint can be loaded through a script tag instead, which isn't
+   subject to that restriction at all — it just needs the sheet's real id. */
+function loadGvizViaScript(id, gid){
+  return new Promise(function(resolve, reject){
+    var s = document.createElement('script');
+    var done = false;
+    var timer = setTimeout(function(){ finish(new Error('timed out')); }, 20000);
+    function cleanup(){ if(s.parentNode) s.parentNode.removeChild(s); clearTimeout(timer); }
+    function finish(err, table){
+      if(done) return; done = true; cleanup();
+      err ? reject(err) : resolve(table);
+    }
+    window.google = window.google || {};
+    window.google.visualization = window.google.visualization || {};
+    window.google.visualization.Query = window.google.visualization.Query || {};
+    window.google.visualization.Query.setResponse = function(resp){
+      if(resp && resp.status === 'error'){
+        var d = resp.errors && resp.errors[0];
+        finish(new Error(d ? (d.detailed_message || d.message) : 'sheet refused the request'));
+        return;
+      }
+      finish(null, resp && resp.table);
+    };
+    s.onerror = function(){ finish(new Error('could not reach the sheet')); };
+    s.src = 'https://docs.google.com/spreadsheets/d/' + id +
+      '/gviz/tq?tqx=out:json&headers=1' + (gid ? '&gid=' + gid : '') + '&cb=' + Date.now();
+    document.head.appendChild(s);
+  });
+}
+function gvizTableToGrid(t){
+  if(!t || !t.cols) throw new Error('unexpected response');
+  var labels = t.cols.map(function(c){ return String(c.label || '').trim(); });
+  var head = labels.map(function(l, i){ return l || String(t.cols[i].id || ''); });
+  var grid = [head];
+  (t.rows||[]).forEach(function(r){
+    grid.push((r.c||[]).map(function(c){
+      if(c == null) return '';
+      return String(c.f != null ? c.f : (c.v == null ? '' : c.v));
+    }));
+  });
+  // If gviz found no header row the labels come back blank, and the real
+  // header is sitting in what it treated as the first data row.
+  if(labels.join('') === '') grid.shift();
+  return grid;
+}
+async function fetchCsvGrid(url){
+  var res = await fetch(url + (url.indexOf('?')<0?'?':'&') + 'cb=' + Date.now(), {cache:'no-store'});
+  if(!res.ok) throw new Error('HTTP ' + res.status);
+  return parseCSV(await res.text());
+}
+
 async function refreshFromSheet(quiet){
   var raw = sheetUrl();
   if(!raw) return;
-  var url = normalizeSheetUrl(raw);
   if(!quiet) status('Reading the sheet…', true);
+  var id  = (raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]{20,})/) || [])[1];
+  var gid = (raw.match(/[#&?]gid=([0-9]+)/) || [])[1];
   try{
-    var res = await fetch(url + (url.indexOf('?')<0?'?':'&') + 'cb=' + Date.now(), {cache:'no-store'});
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    var text = await res.text();
-    var grid = parseCSV(text);
-    if(grid.length < 2) throw new Error('empty sheet');
+    var grid = null, firstErr = null;
+    try{ grid = await fetchCsvGrid(normalizeSheetUrl(raw)); }
+    catch(e){ firstErr = e; }
+    if((!grid || grid.length < 2) && id){
+      try{ grid = gvizTableToGrid(await loadGvizViaScript(id, gid)); }
+      catch(e2){ if(!grid) firstErr = firstErr || e2; }
+    }
+    if(!grid) throw firstErr || new Error('could not read the sheet');
+    if(grid.length < 2) throw new Error('the sheet has a header row but no data');
 
     var head = grid[0];
-    var map_ = {}, approvedAt = -1;
+    var map_ = {}, approvedAt = -1, taken = {};
+    head.forEach(function(h,i){                       // exact names win first
+      if(isApprovedHeader(h)){ approvedAt = i; taken[i] = 1; return; }
+      var col = matchHeaderExact(h);
+      if(col && map_[col]===undefined){ map_[col] = i; taken[i] = 1; }
+    });
+    head.forEach(function(h,i){                       // then loose matches
+      if(taken[i]) return;
+      var col = matchHeaderLoose(h);
+      if(col && map_[col]===undefined){ map_[col] = i; taken[i] = 1; }
+    });
+    // Anything still unclaimed is a column the user added themselves. Keep it:
+    // it becomes its own filter group in the sidebar.
+    var extraAt = {};
     head.forEach(function(h,i){
-      if(isApprovedHeader(h)){ approvedAt = i; return; }
-      var col = matchHeader(h);
-      if(col && map_[col]===undefined) map_[col] = i;
+      if(taken[i]) return;
+      var label = String(h==null?'':h).trim();
+      if(label) extraAt[label] = i;
     });
     if(map_.venue===undefined && map_.event===undefined){
       throw new Error('no venue or event column found');
@@ -468,6 +586,12 @@ async function refreshFromSheet(quiet){
         var i = map_[c];
         o[c] = (i===undefined || g[i]==null) ? '' : String(g[i]).trim();
       });
+      var x = {};
+      for(var label in extraAt){
+        var v = g[extraAt[label]];
+        x[label] = (v==null) ? '' : String(v).trim();
+      }
+      o._x = x;
       if(!o.network) o.network = 'Unsorted';
       if(o.venue || o.event) out.push(o);
     });
@@ -490,9 +614,10 @@ function sheetBanner(err){
   el.innerHTML =
     '<b>Couldn\'t read the sheet</b>'+
     'The map is showing its built-in rows instead. Reason: <code>'+esc(err)+'</code>.<br>'+
-    'In the sheet, go to <b>File &rarr; Share &rarr; Publish to web</b>, choose the tab, pick '+
-    '<b>Comma-separated values (.csv)</b>, publish, and paste that link into Data source. '+
-    'A plain <code>/edit</code> link only works if the sheet is also shared with anyone who has the link.'+
+    'Paste the sheet\'s ordinary address — the <code>/edit</code> one from your browser bar — into '+
+    'Data source, and in the sheet click <b>Share</b> and set <b>General access</b> to '+
+    '<b>Anyone with the link &middot; Viewer</b>. That address contains the sheet\'s id, which lets '+
+    'the map read it a second way when the published link is blocked.'+
     '<div class="row-end"><button class="btn primary" id="w-src">Data source</button>'+
     '<button class="btn" id="w-x">Dismiss</button></div>';
   el.hidden = false;
@@ -638,8 +763,19 @@ function visible(){
     if(ui.offNets[n]) return false;
     var d = (r.day||'').trim();
     if(d && ui.offDays[d]) return false;
+    // A row passes an extra filter if any of its values for that column is on.
+    // Rows with no value in that column are never hidden by it.
+    for(var f in ui.offExtras){
+      var vals = extraValues(r, f);
+      if(!vals.length) continue;
+      var anyOn = vals.some(function(v){ return !ui.offExtras[f][v]; });
+      if(!anyOn) return false;
+    }
     if(!q) return true;
-    return COLS.some(function(k){ return String(r[k]||'').toLowerCase().indexOf(q)>=0; });
+    if(COLS.some(function(k){ return String(r[k]||'').toLowerCase().indexOf(q)>=0; })) return true;
+    return r._x && Object.keys(r._x).some(function(f){
+      return String(r._x[f]||'').toLowerCase().indexOf(q) >= 0;
+    });
   });
 }
 function venues(list){
@@ -684,9 +820,18 @@ function drawMap(){
       '<div class="addr">'+esc(v.address||'')+(v.colonia?' · '+esc(v.colonia):'')+'</div><ul>';
     v.events.forEach(function(e){
       var meta = [e.day,e.time,e.cadence,e.access].filter(Boolean).join(' · ');
+      var xtra = '';
+      if(e._x){
+        var parts = [];
+        Object.keys(e._x).forEach(function(f){
+          if(String(e._x[f]||'').trim()) parts.push(esc(f)+': '+esc(e._x[f]));
+        });
+        if(parts.length) xtra = '<div class="meta">'+parts.join(' · ')+'</div>';
+      }
       html += '<li style="--ev:'+colorOf(e.network)+'">'+
         '<div class="ev">'+esc(e.event||'(untitled)')+'</div>'+
         '<div class="meta">'+esc((e.network||'Unsorted'))+(meta?' — '+esc(meta):'')+'</div>'+
+        xtra+
         (e.notes?'<div style="font-size:12px;margin-top:3px">'+esc(e.notes)+'</div>':'')+
         (/^https?:\/\//.test(e.source||'')?'<div class="meta"><a href="'+esc(e.source)+'" target="_blank" rel="noopener">source ↗</a></div>'
           :(e.source?'<div class="meta">source: '+esc(e.source)+'</div>':''))+
@@ -758,7 +903,53 @@ function renderNets(){
     });
     box.appendChild(lab);
   });
+  renderExtras();   // keep the user-added column filters in step with the data
 }
+/* One filter group per user-added column, rebuilt whenever the data changes. */
+function renderExtras(){
+  var box = document.getElementById('extras');
+  var fields = extraFields();
+  box.innerHTML = '';
+  Object.keys(fields).sort().forEach(function(f){
+    if(!ui.offExtras[f]) ui.offExtras[f] = {};
+    var counts = extraCounts(f);
+    var sec = document.createElement('div');
+    sec.className = 'rail-sec';
+    var h = document.createElement('h2');
+    h.textContent = f;
+    sec.appendChild(h);
+
+    fields[f].forEach(function(v){
+      var lab = document.createElement('label');
+      lab.className = 'net' + (ui.offExtras[f][v] ? ' off' : '');
+      lab.innerHTML = '<input type="checkbox"'+(ui.offExtras[f][v]?'':' checked')+'>'+
+        '<span class="nm">'+esc(v)+'</span>'+
+        '<span class="ct">'+(counts[v]||0)+'</span>';
+      lab.querySelector('input').addEventListener('change', function(e){
+        if(e.target.checked) delete ui.offExtras[f][v];
+        else ui.offExtras[f][v] = true;
+        renderExtras(); render();
+      });
+      sec.appendChild(lab);
+    });
+
+    var btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;gap:6px';
+    btns.innerHTML = '<button class="btn" style="flex:1">All</button>'+
+                     '<button class="btn" style="flex:1">None</button>';
+    btns.children[0].addEventListener('click', function(){
+      ui.offExtras[f] = {}; renderExtras(); render();
+    });
+    btns.children[1].addEventListener('click', function(){
+      ui.offExtras[f] = {};
+      fields[f].forEach(function(v){ ui.offExtras[f][v] = true; });
+      renderExtras(); render();
+    });
+    sec.appendChild(btns);
+    box.appendChild(sec);
+  });
+}
+
 function renderDays(){
   var box = document.getElementById('days');
   box.innerHTML='';
@@ -871,12 +1062,19 @@ function parseCSV(text){
   return out.filter(function(r){ return r.some(function(c){ return String(c).trim()!==''; }); });
 }
 function toCSV(list){
-  var head = COLS.join(',');
+  var xf = [];
+  list.forEach(function(r){
+    if(!r._x) return;
+    Object.keys(r._x).forEach(function(f){ if(xf.indexOf(f)<0) xf.push(f); });
+  });
+  var cell = function(v){
+    v = String(v==null?'':v);
+    return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v;
+  };
+  var head = COLS.concat(xf).map(cell).join(',');
   var body = list.map(function(r){
-    return COLS.map(function(c){
-      var v = String(r[c]==null?'':r[c]);
-      return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v;
-    }).join(',');
+    return COLS.map(function(c){ return cell(r[c]); })
+      .concat(xf.map(function(f){ return cell(r._x && r._x[f]); })).join(',');
   }).join('\n');
   return head+'\n'+body;
 }
@@ -1108,15 +1306,15 @@ function sourcePanel(){
   var p = panel(
     '<h2>Data source</h2>'+
     '<p class="sub">Point the map at a published Google Sheet and the sheet becomes the source of truth — everyone sees entries as soon as the sheet has them, with nothing to republish.</p>'+
-    '<label class="fld" style="margin-bottom:10px">Published sheet CSV link'+
-      '<input id="s-sheet" placeholder="https://docs.google.com/spreadsheets/d/e/…/pub?output=csv"></label>'+
+    '<label class="fld" style="margin-bottom:10px">Sheet link — the ordinary <code>/edit</code> address works best'+
+      '<input id="s-sheet" placeholder="https://docs.google.com/spreadsheets/d/1AbC…/edit#gid=0"></label>'+
     '<label class="fld" style="margin-bottom:10px">Google Form link (optional)'+
       '<input id="s-form" placeholder="https://docs.google.com/forms/d/e/…/viewform"></label>'+
     '<p class="sub" style="margin:0 0 4px"><b>Setting up the sheet</b></p>'+
     '<ul class="guide" style="margin-top:0">'+
       '<li>Make a sheet whose first row holds the column names: <code>'+COLS.join(', ')+'</code>. Spanish headers work too — <code>lugar</code>, <code>dirección</code>, <code>colonia</code>, <code>organizador</code> and so on are recognised.</li>'+
       '<li>Add an <code>approved</code> column (or <code>aprobado</code>) if you want to vet entries. When that column exists, only rows marked yes, sí, x or true appear on the map. Leave the column out entirely and everything shows.</li>'+
-      '<li>Publish it: <b>File &rarr; Share &rarr; Publish to web</b>, select the tab, choose <b>Comma-separated values (.csv)</b>, then paste the link above.</li>'+
+      '<li>Share it: click <b>Share</b>, set <b>General access</b> to <b>Anyone with the link</b> as <b>Viewer</b>, then copy the address from your browser bar and paste it above. Publish-to-web links work too, but the plain address is more reliable — it carries the sheet id, which gives the map a second way in.</li>'+
       '<li>For a form, build it in Google Forms with question titles matching the column names, send responses to this sheet, and paste the form link above. Collaborators then get a Submit button instead of the editing tools.</li>'+
     '</ul>'+
     '<div class="row-end">'+
