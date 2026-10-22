@@ -1,0 +1,902 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Circuito Roma–Condesa</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: fixed header, left filter rail, map or data table fills the rest. */
+:root{
+  --bg:#F3F5F8; --surface:#FFFFFF; --surface-2:#EDF0F5;
+  --ink:#141821; --muted:#5B6474; --line:#D9DFE8;
+  --accent:#D81B60; --accent-ink:#FFFFFF;
+  --shadow:0 1px 2px rgba(20,24,33,.06),0 8px 24px rgba(20,24,33,.07);
+  --font-ui:'Archivo',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-data:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1118; --surface:#161B24; --surface-2:#1E2531;
+    --ink:#E7EBF2; --muted:#98A2B4; --line:#2A3240;
+    --accent:#FF5285; --accent-ink:#17060D;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1118; --surface:#161B24; --surface-2:#1E2531;
+  --ink:#E7EBF2; --muted:#98A2B4; --line:#2A3240;
+  --accent:#FF5285; --accent-ink:#17060D;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg);color:var(--ink);
+  font-family:var(--font-ui);font-size:14px;line-height:1.45;
+  display:flex;flex-direction:column;overflow:hidden;
+}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---------- header ---------- */
+header{
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:10px max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));
+  background:var(--surface);border-bottom:1px solid var(--line);z-index:600;
+}
+.brand{display:flex;flex-direction:column;min-width:0;margin-right:auto}
+.brand h1{
+  margin:0;font-size:16px;font-weight:700;letter-spacing:-.01em;white-space:nowrap;
+}
+.brand h1 span{color:var(--accent)}
+.brand p{margin:0;font-family:var(--font-data);font-size:11px;color:var(--muted);white-space:nowrap}
+.tools{display:flex;gap:6px;flex-wrap:wrap}
+.btn{
+  background:var(--surface-2);border:1px solid var(--line);color:var(--ink);
+  border-radius:7px;padding:6px 11px;cursor:pointer;font-size:13px;font-weight:500;
+  white-space:nowrap;transition:background .12s,border-color .12s;
+}
+.btn:hover{background:var(--line)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.08)}
+.seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg button{background:var(--surface-2);border:0;padding:6px 12px;cursor:pointer;font-size:13px;font-weight:500}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+
+/* ---------- main ---------- */
+main{flex:1;display:flex;min-height:0;position:relative}
+#rail{
+  width:286px;flex:none;background:var(--surface);border-right:1px solid var(--line);
+  overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:18px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+}
+.rail-sec{display:flex;flex-direction:column;gap:9px;min-width:0}
+.rail-sec h2{
+  margin:0;font-family:var(--font-data);font-size:10px;font-weight:500;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+}
+#q{
+  width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:7px;
+  background:var(--surface-2);
+}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{background:var(--surface-2);border-radius:8px;padding:8px 9px;min-width:0}
+.stat b{display:block;font-family:var(--font-data);font-size:19px;font-variant-numeric:tabular-nums;line-height:1.1}
+.stat span{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+
+.net{display:flex;align-items:center;gap:9px;padding:5px 6px;border-radius:6px;cursor:pointer;min-width:0}
+.net:hover{background:var(--surface-2)}
+.net input{accent-color:var(--accent);margin:0;flex:none}
+.dot{width:11px;height:11px;border-radius:50%;flex:none;border:1px solid rgba(0,0,0,.18)}
+.net .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.net .ct{font-family:var(--font-data);font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.net.off{opacity:.42}
+
+.days{display:flex;gap:4px;flex-wrap:wrap}
+.day{
+  border:1px solid var(--line);background:var(--surface-2);border-radius:6px;
+  padding:5px 0;cursor:pointer;width:34px;text-align:center;
+  font-family:var(--font-data);font-size:11px;
+}
+.day[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.bars{display:flex;align-items:flex-end;gap:4px;height:46px;margin-top:2px}
+.bar{flex:1;background:var(--accent);border-radius:2px 2px 0 0;min-height:2px;opacity:.75}
+.barlab{display:flex;gap:4px;font-family:var(--font-data);font-size:9.5px;color:var(--muted)}
+.barlab span{flex:1;text-align:center}
+
+.toggle{display:flex;align-items:center;gap:9px;cursor:pointer;padding:3px 0}
+.toggle input{accent-color:var(--accent);margin:0}
+.note{font-size:11.5px;color:var(--muted);line-height:1.5}
+
+/* ---------- map ---------- */
+#map{flex:1;min-width:0;background:var(--surface-2)}
+.leaflet-container{font-family:var(--font-ui);background:var(--surface-2)}
+/* No keyless provider ships a dark basemap, so darken the tiles themselves.
+   Only the tile pane is filtered; markers and ties keep their real colors. */
+#map.dark-tiles .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.88) saturate(.7)}
+.leaflet-popup-content-wrapper{
+  background:var(--surface);color:var(--ink);border-radius:10px;box-shadow:var(--shadow);
+}
+.leaflet-popup-tip{background:var(--surface)}
+.leaflet-popup-content{margin:12px 14px;font-size:13px;line-height:1.5;max-height:46vh;overflow:auto}
+.leaflet-popup-close-button{color:var(--muted)!important}
+.pop h3{margin:0 0 2px;font-size:14.5px}
+.pop .addr{font-size:11.5px;color:var(--muted);margin-bottom:9px;font-family:var(--font-data)}
+.pop ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.pop li{border-left:3px solid var(--ev);padding-left:9px}
+.pop .ev{font-weight:600}
+.pop .meta{font-family:var(--font-data);font-size:11px;color:var(--muted)}
+.pop a{color:var(--accent)}
+
+/* ---------- table ---------- */
+#table-wrap{flex:1;min-width:0;overflow:auto;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{border-bottom:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
+th{
+  position:sticky;top:0;background:var(--surface-2);z-index:2;
+  font-family:var(--font-data);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);font-weight:500;white-space:nowrap;
+}
+td[contenteditable]{min-width:88px;cursor:text}
+td[contenteditable]:focus{background:var(--surface-2);outline:2px solid var(--accent);outline-offset:-2px}
+td.num{font-family:var(--font-data);font-variant-numeric:tabular-nums;white-space:nowrap}
+.del{
+  background:none;border:0;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:2px 5px;
+}
+.del:hover{color:var(--accent)}
+.swatch{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+
+/* ---------- panels ---------- */
+.scrim{
+  position:fixed;inset:0;background:rgba(10,13,20,.5);z-index:900;
+  display:flex;align-items:center;justify-content:center;padding:18px;
+}
+.panel{
+  background:var(--surface);border-radius:12px;box-shadow:var(--shadow);
+  width:min(560px,100%);max-height:86vh;overflow:auto;padding:20px;
+}
+.panel h2{margin:0 0 4px;font-size:17px}
+.panel .sub{margin:0 0 16px;font-size:12.5px;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+label.fld{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted);min-width:0}
+label.fld input,label.fld select,label.fld textarea{
+  padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--surface-2);
+  font-size:13px;width:100%;
+}
+textarea{resize:vertical;font-family:var(--font-data);font-size:12px;line-height:1.5}
+.panel .row-end{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+.panel code{font-family:var(--font-data);font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+.panel ul.guide{padding-left:18px;margin:8px 0;font-size:13px;line-height:1.6}
+#status{
+  position:absolute;left:50%;bottom:20px;transform:translateX(-50%);
+  background:var(--ink);color:var(--bg);padding:8px 15px;border-radius:999px;
+  font-size:12.5px;z-index:700;box-shadow:var(--shadow);max-width:84%;text-align:center;
+}
+#rail-toggle{display:none}
+
+@media (max-width:820px){
+  #rail-toggle{display:inline-block}
+  #rail{
+    position:absolute;inset:0 auto 0 0;z-index:650;width:min(300px,86%);
+    box-shadow:var(--shadow);
+  }
+  #rail[hidden]{display:none!important}
+  .brand p{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <button class="btn" id="rail-toggle" aria-label="Toggle filters">☰</button>
+  <div class="brand">
+    <h1>Circuito <span>Roma–Condesa</span></h1>
+    <p id="scope">social event networks · CDMX</p>
+  </div>
+  <div class="seg" role="group" aria-label="View">
+    <button id="v-map" aria-pressed="true">Map</button>
+    <button id="v-tab" aria-pressed="false">Data</button>
+  </div>
+  <div class="tools">
+    <button class="btn primary" id="b-add">Add event</button>
+    <button class="btn" id="b-import">Import CSV</button>
+    <button class="btn" id="b-geo">Geocode</button>
+    <button class="btn" id="b-export">Export</button>
+    <button class="btn" id="b-help">?</button>
+    <button class="btn" id="b-theme" aria-label="Toggle theme">◐</button>
+  </div>
+</header>
+
+<main>
+  <aside id="rail">
+    <div class="rail-sec">
+      <h2>Search</h2>
+      <input id="q" type="search" placeholder="venue, event, organizer, note…">
+      <div class="stats">
+        <div class="stat"><b id="s-ven">0</b><span>Venues</span></div>
+        <div class="stat"><b id="s-ev">0</b><span>Events</span></div>
+        <div class="stat"><b id="s-net">0</b><span>Networks</span></div>
+      </div>
+    </div>
+
+    <div class="rail-sec">
+      <h2>Networks</h2>
+      <div id="nets"></div>
+      <div style="display:flex;gap:6px">
+        <button class="btn" id="n-all" style="flex:1">All</button>
+        <button class="btn" id="n-none" style="flex:1">None</button>
+      </div>
+    </div>
+
+    <div class="rail-sec">
+      <h2>Weekly rhythm</h2>
+      <div class="bars" id="bars"></div>
+      <div class="barlab"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div>
+      <div class="days" id="days"></div>
+    </div>
+
+    <div class="rail-sec">
+      <h2>Display</h2>
+      <label class="toggle"><input type="checkbox" id="t-ties"> Draw organizer ties</label>
+      <label class="toggle"><input type="checkbox" id="t-size" checked> Size venues by event count</label>
+      <label class="toggle"><input type="checkbox" id="t-lab"> Always show venue labels</label>
+      <label class="fld" style="margin-top:4px">Basemap
+        <select id="basemap">
+          <option value="osm">OpenStreetMap</option>
+          <option value="hot">OSM Humanitarian</option>
+          <option value="esri">Esri Light Gray</option>
+        </select>
+      </label>
+      <button class="btn" id="b-fit">Zoom to data</button>
+    </div>
+
+    <div class="rail-sec">
+      <h2>Notes</h2>
+      <p class="note">Rows marked <code>example</code> in the source column are seed data — coordinates are approximate and the events are placeholders. Replace them with your own fieldwork and re-geocode from the address.</p>
+      <p class="note">Everything lives in this browser's local storage. Export before clearing site data or moving machines.</p>
+      <button class="btn" id="b-reset">Reset to seed rows</button>
+    </div>
+  </aside>
+
+  <div id="map"></div>
+  <div id="table-wrap" hidden></div>
+  <div id="status" hidden></div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+(function(){
+'use strict';
+
+/* ---------------------------------------------------------------
+   DATA MODEL
+   One row = one event (a recurring series counts as one row).
+   Several rows can share a venue; that is what makes a venue a hub.
+----------------------------------------------------------------*/
+var COLS = ['venue','address','colonia','lat','lng','network','event','day','time','cadence','access','source','notes'];
+var DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+var STORE = 'circuito-rc-v1';
+
+var SEED = [
+  {venue:'Parque México',address:'Av. México s/n, Hipódromo',colonia:'Hipódromo',lat:19.4114,lng:-99.1716,network:'Run clubs',event:'Weekday morning run (example)',day:'Tue',time:'07:00',cadence:'weekly',access:'open',source:'example',notes:'Seed row — replace with observed data.'},
+  {venue:'Parque México',address:'Av. México s/n, Hipódromo',colonia:'Hipódromo',lat:19.4114,lng:-99.1716,network:'Language exchange',event:'Intercambio in the park (example)',day:'Sat',time:'11:00',cadence:'weekly',access:'open',source:'example',notes:'Seed row — replace with observed data.'},
+  {venue:'Parque España',address:'Av. Veracruz s/n, Condesa',colonia:'Condesa',lat:19.4161,lng:-99.1724,network:'Run clubs',event:'Evening social run (example)',day:'Thu',time:'19:30',cadence:'weekly',access:'open',source:'example',notes:'Seed row — replace with observed data.'},
+  {venue:'Blend Station',address:'Av. Tamaulipas 60, Condesa',colonia:'Condesa',lat:19.4125,lng:-99.1744,network:'Coworking / remote work',event:'Laptop-hours cowork (example)',day:'Wed',time:'10:00',cadence:'weekly',access:'open',source:'example',notes:'Seed row — replace with observed data.'},
+  {venue:'Mercado Roma',address:'Querétaro 225, Roma Norte',colonia:'Roma Norte',lat:19.4113,lng:-99.1615,network:'Founders / startup',event:'Founder meetup (example)',day:'Thu',time:'19:00',cadence:'monthly',access:'rsvp',source:'example',notes:'Seed row — replace with observed data.'},
+  {venue:'Cine Tonalá',address:'Tonalá 261, Roma Sur',colonia:'Roma Sur',lat:19.4075,lng:-99.1600,network:'Arts / film',event:'Screening + party (example)',day:'Fri',time:'21:00',cadence:'weekly',access:'paid',source:'example',notes:'Seed row — replace with observed data.'},
+  {venue:'Huerto Roma Verde',address:'Jalapa 234, Roma Sur',colonia:'Roma Sur',lat:19.4060,lng:-99.1600,network:'Wellness / community',event:'Weekend taller (example)',day:'Sun',time:'10:00',cadence:'weekly',access:'open',source:'example',notes:'Seed row — replace with observed data.'},
+  {venue:'Plaza Río de Janeiro',address:'Plaza Río de Janeiro, Roma Norte',colonia:'Roma Norte',lat:19.4194,lng:-99.1628,network:'Language exchange',event:'Park intercambio (example)',day:'Wed',time:'18:00',cadence:'weekly',access:'open',source:'example',notes:'Seed row — replace with observed data.'},
+  {venue:'Centro Cultural Bella Época',address:'Av. Tamaulipas 202, Condesa',colonia:'Condesa',lat:19.4087,lng:-99.1754,network:'Arts / film',event:'Book presentation (example)',day:'Tue',time:'19:00',cadence:'monthly',access:'open',source:'example',notes:'Seed row — replace with observed data.'},
+  {venue:'Parque Luis Cabrera',address:'Plaza Luis Cabrera, Roma Norte',colonia:'Roma Norte',lat:19.4130,lng:-99.1595,network:'Run clubs',event:'Saturday long run start (example)',day:'Sat',time:'08:00',cadence:'weekly',access:'open',source:'example',notes:'Seed row — replace with observed data.'}
+];
+
+var PALETTE = ['#D81B60','#2D7DD2','#E8A33D','#2F9E6E','#8A5CF5','#D9544D','#15A8A0','#A6743B','#5C7CFA','#C2185B'];
+
+var rows = [];
+var netColor = {};
+var ui = {
+  q:'', offNets:{}, offDays:{},
+  ties:false, size:true, labels:false, view:'map'
+};
+
+/* ---------------------------------------------------------------
+   STORAGE
+----------------------------------------------------------------*/
+function load(){
+  try{
+    var raw = localStorage.getItem(STORE);
+    if(raw){ rows = JSON.parse(raw); return; }
+  }catch(e){}
+  rows = SEED.map(function(r){ return Object.assign({}, r); });
+}
+function save(){
+  try{ localStorage.setItem(STORE, JSON.stringify(rows)); }catch(e){}
+}
+
+/* ---------------------------------------------------------------
+   MAP
+----------------------------------------------------------------*/
+var map = L.map('map',{zoomControl:true, preferCanvas:false}).setView([19.4135,-99.1680],14);
+
+/* Keyless basemaps only — no account, no API key, no billing.
+   If one of these ever starts demanding a key, switch to another in the rail. */
+var BASEMAPS = {
+  osm:{
+    name:'OpenStreetMap',
+    url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    maxZoom:19,
+    attr:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  },
+  hot:{
+    name:'OSM Humanitarian',
+    url:'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
+    subdomains:'ab', maxZoom:19,
+    attr:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · tiles by <a href="https://www.hotosm.org/">HOT</a>, hosted by <a href="https://openstreetmap.fr/">OSM France</a>'
+  },
+  esri:{
+    name:'Esri Light Gray',
+    url:'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    maxZoom:16,
+    attr:'Tiles &copy; <a href="https://www.esri.com/">Esri</a>'
+  }
+};
+var bmKey = 'osm';
+try{ bmKey = localStorage.getItem(STORE+'-basemap') || 'osm'; }catch(e){}
+if(!BASEMAPS[bmKey]) bmKey = 'osm';
+
+var tiles = null;
+var venueLayer = L.layerGroup().addTo(map);
+var tieLayer = L.layerGroup().addTo(map);
+
+function applyBasemap(){
+  var b = BASEMAPS[bmKey];
+  if(tiles) map.removeLayer(tiles);
+  var opts = {maxZoom:b.maxZoom||19, attribution:b.attr};
+  if(b.subdomains) opts.subdomains = b.subdomains;
+  tiles = L.tileLayer(b.url, opts).addTo(map);
+  tiles.bringToBack();
+  try{ localStorage.setItem(STORE+'-basemap', bmKey); }catch(e){}
+}
+function isDark(){
+  var t = document.documentElement.getAttribute('data-theme');
+  if(t==='dark') return true;
+  if(t==='light') return false;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+function retile(){
+  document.getElementById('map').classList.toggle('dark-tiles', isDark());
+}
+
+/* ---------------------------------------------------------------
+   DERIVED DATA
+----------------------------------------------------------------*/
+function networks(){
+  var seen = [];
+  rows.forEach(function(r){
+    var n = (r.network||'Unsorted').trim() || 'Unsorted';
+    if(seen.indexOf(n)<0) seen.push(n);
+  });
+  seen.sort();
+  seen.forEach(function(n,i){ if(!netColor[n]) netColor[n] = PALETTE[i % PALETTE.length]; });
+  return seen;
+}
+function colorOf(n){ return netColor[(n||'Unsorted').trim()||'Unsorted'] || '#888'; }
+
+function visible(){
+  var q = ui.q.toLowerCase().trim();
+  return rows.filter(function(r){
+    var n = (r.network||'Unsorted').trim()||'Unsorted';
+    if(ui.offNets[n]) return false;
+    var d = (r.day||'').trim();
+    if(d && ui.offDays[d]) return false;
+    if(!q) return true;
+    return COLS.some(function(k){ return String(r[k]||'').toLowerCase().indexOf(q)>=0; });
+  });
+}
+function venues(list){
+  var m = {};
+  list.forEach(function(r){
+    if(!isFinite(parseFloat(r.lat)) || !isFinite(parseFloat(r.lng))) return;
+    var key = (r.venue||'(unnamed)').trim()+'|'+Number(r.lat).toFixed(5)+'|'+Number(r.lng).toFixed(5);
+    if(!m[key]) m[key] = {venue:(r.venue||'(unnamed)').trim(), address:r.address||'', colonia:r.colonia||'',
+                          lat:parseFloat(r.lat), lng:parseFloat(r.lng), events:[]};
+    m[key].events.push(r);
+  });
+  return Object.keys(m).map(function(k){ return m[k]; });
+}
+
+/* ---------------------------------------------------------------
+   RENDER: MAP
+----------------------------------------------------------------*/
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+function drawMap(){
+  venueLayer.clearLayers();
+  tieLayer.clearLayers();
+  var list = visible();
+  var vs = venues(list);
+
+  vs.forEach(function(v){
+    var n = v.events.length;
+    var r = ui.size ? Math.min(24, 7 + Math.sqrt(n)*4.2) : 8;
+    var top = {};
+    v.events.forEach(function(e){
+      var k=(e.network||'Unsorted').trim()||'Unsorted'; top[k]=(top[k]||0)+1;
+    });
+    var domin = Object.keys(top).sort(function(a,b){return top[b]-top[a];})[0];
+
+    var mk = L.circleMarker([v.lat,v.lng],{
+      radius:r, color:'#ffffff', weight:1.6, opacity:.85,
+      fillColor:colorOf(domin), fillOpacity:.82
+    });
+
+    var html = '<div class="pop"><h3>'+esc(v.venue)+'</h3>'+
+      '<div class="addr">'+esc(v.address||'')+(v.colonia?' · '+esc(v.colonia):'')+'</div><ul>';
+    v.events.forEach(function(e){
+      var meta = [e.day,e.time,e.cadence,e.access].filter(Boolean).join(' · ');
+      html += '<li style="--ev:'+colorOf(e.network)+'">'+
+        '<div class="ev">'+esc(e.event||'(untitled)')+'</div>'+
+        '<div class="meta">'+esc((e.network||'Unsorted'))+(meta?' — '+esc(meta):'')+'</div>'+
+        (e.notes?'<div style="font-size:12px;margin-top:3px">'+esc(e.notes)+'</div>':'')+
+        (/^https?:\/\//.test(e.source||'')?'<div class="meta"><a href="'+esc(e.source)+'" target="_blank" rel="noopener">source ↗</a></div>'
+          :(e.source?'<div class="meta">source: '+esc(e.source)+'</div>':''))+
+        '</li>';
+    });
+    html += '</ul></div>';
+    mk.bindPopup(html,{maxWidth:320});
+
+    if(ui.labels){
+      mk.bindTooltip(v.venue,{permanent:true,direction:'top',offset:[0,-r-2],className:'vlabel'});
+    }else{
+      mk.bindTooltip(v.venue+' · '+n+(n===1?' event':' events'),{direction:'top'});
+    }
+    venueLayer.addLayer(mk);
+  });
+
+  if(ui.ties) drawTies(list);
+  renderStats(list, vs);
+}
+
+function drawTies(list){
+  var byNet = {};
+  list.forEach(function(r){
+    if(!isFinite(parseFloat(r.lat))||!isFinite(parseFloat(r.lng))) return;
+    var n=(r.network||'Unsorted').trim()||'Unsorted';
+    (byNet[n]=byNet[n]||[]).push([parseFloat(r.lat),parseFloat(r.lng)]);
+  });
+  Object.keys(byNet).forEach(function(n){
+    var pts = byNet[n];
+    if(pts.length<2) return;
+    var uniq = {};
+    pts.forEach(function(p){ uniq[p[0].toFixed(5)+','+p[1].toFixed(5)]=p; });
+    var up = Object.keys(uniq).map(function(k){ return uniq[k]; });
+    if(up.length<2) return;
+    var cx=0, cy=0;
+    up.forEach(function(p){ cx+=p[0]; cy+=p[1]; });
+    var c=[cx/up.length, cy/up.length];
+    up.forEach(function(p){
+      tieLayer.addLayer(L.polyline([c,p],{
+        color:colorOf(n), weight:1.6, opacity:.55, dashArray:'4 5', interactive:false
+      }));
+    });
+    tieLayer.addLayer(L.circleMarker(c,{
+      radius:4, color:colorOf(n), weight:2, fillColor:colorOf(n), fillOpacity:.25
+    }).bindTooltip(n+' — centroid of '+up.length+' venues',{direction:'top'}));
+  });
+}
+
+/* ---------------------------------------------------------------
+   RENDER: RAIL
+----------------------------------------------------------------*/
+function renderNets(){
+  var nets = networks();
+  var counts = {};
+  rows.forEach(function(r){
+    var n=(r.network||'Unsorted').trim()||'Unsorted'; counts[n]=(counts[n]||0)+1;
+  });
+  var box = document.getElementById('nets');
+  box.innerHTML = '';
+  nets.forEach(function(n){
+    var lab = document.createElement('label');
+    lab.className = 'net' + (ui.offNets[n]?' off':'');
+    lab.innerHTML = '<input type="checkbox"'+(ui.offNets[n]?'':' checked')+'>'+
+      '<span class="dot" style="background:'+colorOf(n)+'"></span>'+
+      '<span class="nm">'+esc(n)+'</span><span class="ct">'+(counts[n]||0)+'</span>';
+    lab.querySelector('input').addEventListener('change',function(e){
+      if(e.target.checked) delete ui.offNets[n]; else ui.offNets[n]=true;
+      renderNets(); render();
+    });
+    box.appendChild(lab);
+  });
+}
+function renderDays(){
+  var box = document.getElementById('days');
+  box.innerHTML='';
+  DAYS.forEach(function(d){
+    var b=document.createElement('button');
+    b.className='day'; b.textContent=d.slice(0,2);
+    b.setAttribute('aria-pressed', ui.offDays[d] ? 'false':'true');
+    b.title=d;
+    b.addEventListener('click',function(){
+      if(ui.offDays[d]) delete ui.offDays[d]; else ui.offDays[d]=true;
+      renderDays(); render();
+    });
+    box.appendChild(b);
+  });
+}
+function renderStats(list, vs){
+  document.getElementById('s-ven').textContent = vs.length;
+  document.getElementById('s-ev').textContent = list.length;
+  var ns={}; list.forEach(function(r){ ns[(r.network||'Unsorted').trim()||'Unsorted']=1; });
+  document.getElementById('s-net').textContent = Object.keys(ns).length;
+
+  var hist = DAYS.map(function(d){ return list.filter(function(r){ return (r.day||'').trim()===d; }).length; });
+  var max = Math.max.apply(null, hist.concat([1]));
+  var bars = document.getElementById('bars');
+  bars.innerHTML='';
+  hist.forEach(function(v,i){
+    var b=document.createElement('div');
+    b.className='bar';
+    b.style.height = Math.round((v/max)*100)+'%';
+    b.title = DAYS[i]+': '+v;
+    if(!v) b.style.opacity='.18';
+    bars.appendChild(b);
+  });
+  var geoless = rows.filter(function(r){ return !isFinite(parseFloat(r.lat))||!isFinite(parseFloat(r.lng)); }).length;
+  document.getElementById('scope').textContent =
+    rows.length+' rows · '+(geoless?geoless+' missing coords':'all geocoded');
+}
+
+/* ---------------------------------------------------------------
+   RENDER: TABLE
+----------------------------------------------------------------*/
+function drawTable(){
+  var wrap = document.getElementById('table-wrap');
+  var t = document.createElement('table');
+  var thead = document.createElement('thead');
+  var hr = document.createElement('tr');
+  hr.innerHTML = '<th></th>' + COLS.map(function(c){ return '<th>'+c+'</th>'; }).join('') + '<th></th>';
+  thead.appendChild(hr); t.appendChild(thead);
+
+  var tb = document.createElement('tbody');
+  rows.forEach(function(r, i){
+    var tr = document.createElement('tr');
+    var sw = '<td class="num"><span class="swatch" style="background:'+colorOf(r.network)+'"></span></td>';
+    var cells = COLS.map(function(c){
+      var cls = (c==='lat'||c==='lng') ? ' class="num"' : '';
+      return '<td'+cls+' contenteditable="true" data-i="'+i+'" data-k="'+c+'">'+esc(r[c]||'')+'</td>';
+    }).join('');
+    tr.innerHTML = sw + cells + '<td><button class="del" data-del="'+i+'" title="Delete row">×</button></td>';
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  wrap.innerHTML='';
+  wrap.appendChild(t);
+
+  wrap.querySelectorAll('td[contenteditable]').forEach(function(td){
+    td.addEventListener('blur', function(){
+      var i = +td.dataset.i, k = td.dataset.k;
+      var val = td.textContent.replace(/\s+/g,' ').trim();
+      if(rows[i][k] === val) return;
+      rows[i][k] = val;
+      save(); renderNets(); render();
+    });
+    td.addEventListener('keydown', function(e){
+      if(e.key==='Enter'){ e.preventDefault(); td.blur(); }
+    });
+  });
+  wrap.querySelectorAll('[data-del]').forEach(function(b){
+    b.addEventListener('click', function(){
+      rows.splice(+b.dataset.del,1); save(); renderNets(); render();
+    });
+  });
+}
+
+function render(){
+  if(ui.view==='map'){ drawMap(); }
+  else { drawTable(); renderStats(visible(), venues(visible())); }
+}
+
+/* ---------------------------------------------------------------
+   CSV
+----------------------------------------------------------------*/
+function parseCSV(text){
+  var out=[], row=[], cur='', q=false, i=0;
+  text = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  while(i<text.length){
+    var c=text[i];
+    if(q){
+      if(c==='"'){ if(text[i+1]==='"'){ cur+='"'; i+=2; continue; } q=false; i++; continue; }
+      cur+=c; i++; continue;
+    }
+    if(c==='"'){ q=true; i++; continue; }
+    if(c===','){ row.push(cur); cur=''; i++; continue; }
+    if(c==='\n'){ row.push(cur); out.push(row); row=[]; cur=''; i++; continue; }
+    cur+=c; i++;
+  }
+  if(cur.length||row.length){ row.push(cur); out.push(row); }
+  return out.filter(function(r){ return r.some(function(c){ return String(c).trim()!==''; }); });
+}
+function toCSV(list){
+  var head = COLS.join(',');
+  var body = list.map(function(r){
+    return COLS.map(function(c){
+      var v = String(r[c]==null?'':r[c]);
+      return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v;
+    }).join(',');
+  }).join('\n');
+  return head+'\n'+body;
+}
+function toGeoJSON(list){
+  return JSON.stringify({type:'FeatureCollection', features:venues(list).map(function(v){
+    return {type:'Feature',
+      geometry:{type:'Point',coordinates:[v.lng,v.lat]},
+      properties:{venue:v.venue,address:v.address,colonia:v.colonia,
+        event_count:v.events.length,
+        networks:Array.from(new Set(v.events.map(function(e){return e.network;}))),
+        events:v.events.map(function(e){
+          return {event:e.event,network:e.network,day:e.day,time:e.time,
+                  cadence:e.cadence,access:e.access,source:e.source,notes:e.notes};
+        })}};
+  })}, null, 2);
+}
+function download(name, text, type){
+  var blob = new Blob([text],{type:type||'text/plain;charset=utf-8'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href=url; a.download=name; document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 400);
+}
+
+/* ---------------------------------------------------------------
+   GEOCODING (Nominatim — 1 request/second, see usage policy)
+----------------------------------------------------------------*/
+function status(msg, keep){
+  var el = document.getElementById('status');
+  if(!msg){ el.hidden=true; return; }
+  el.hidden=false; el.textContent=msg;
+  if(!keep) setTimeout(function(){ el.hidden=true; }, 3200);
+}
+function sleep(ms){ return new Promise(function(r){ setTimeout(r,ms); }); }
+
+async function geocodeMissing(){
+  var todo = rows.map(function(r,i){ return {r:r,i:i}; })
+    .filter(function(x){
+      return (!isFinite(parseFloat(x.r.lat))||!isFinite(parseFloat(x.r.lng))) && (x.r.address||x.r.venue);
+    });
+  if(!todo.length){ status('Every row already has coordinates.'); return; }
+  var done=0, failed=0;
+  for(var k=0;k<todo.length;k++){
+    var r = todo[k].r;
+    var qs = [r.venue, r.address, r.colonia, 'Ciudad de México, México']
+      .filter(Boolean).join(', ');
+    status('Geocoding '+(k+1)+' of '+todo.length+' — '+(r.venue||r.address), true);
+    try{
+      var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=mx'+
+        '&viewbox=-99.20,19.45,-99.13,19.38&bounded=1&q='+encodeURIComponent(qs);
+      var res = await fetch(url, {headers:{'Accept':'application/json'}});
+      var js = await res.json();
+      if(js && js.length){ r.lat = parseFloat(js[0].lat).toFixed(6); r.lng = parseFloat(js[0].lon).toFixed(6); done++; }
+      else failed++;
+    }catch(e){ failed++; }
+    await sleep(1100);
+  }
+  save(); renderNets(); render();
+  status('Geocoded '+done+' row'+(done===1?'':'s')+(failed?' · '+failed+' not found — fill lat/lng by hand':''));
+}
+
+/* ---------------------------------------------------------------
+   PANELS
+----------------------------------------------------------------*/
+function panel(html){
+  var scrim = document.createElement('div');
+  scrim.className='scrim';
+  scrim.innerHTML = '<div class="panel" role="dialog" aria-modal="true">'+html+'</div>';
+  scrim.addEventListener('click', function(e){ if(e.target===scrim) scrim.remove(); });
+  document.addEventListener('keydown', function esc(e){
+    if(e.key==='Escape'){ scrim.remove(); document.removeEventListener('keydown', esc); }
+  });
+  document.body.appendChild(scrim);
+  return scrim;
+}
+
+function addPanel(){
+  var netOpts = networks().map(function(n){ return '<option value="'+esc(n)+'">'; }).join('');
+  var p = panel(
+    '<h2>Add an event</h2><p class="sub">One row per event or recurring series. Leave lat/lng blank and press Geocode afterwards.</p>'+
+    '<div class="grid2">'+
+      '<label class="fld">Venue<input id="f-venue" required></label>'+
+      '<label class="fld">Colonia<input id="f-colonia" list="l-col" placeholder="Roma Norte"></label>'+
+      '<label class="fld" style="grid-column:1/-1">Address<input id="f-address" placeholder="Street, number, colonia"></label>'+
+      '<label class="fld">Network / organizer<input id="f-network" list="l-net" placeholder="Run clubs"></label>'+
+      '<label class="fld">Event name<input id="f-event"></label>'+
+      '<label class="fld">Day<select id="f-day"><option value=""></option>'+
+        DAYS.map(function(d){return '<option>'+d+'</option>';}).join('')+'<option>varies</option></select></label>'+
+      '<label class="fld">Time<input id="f-time" placeholder="19:30"></label>'+
+      '<label class="fld">Cadence<select id="f-cadence">'+
+        ['','weekly','biweekly','monthly','one-off','irregular'].map(function(c){return '<option>'+c+'</option>';}).join('')+
+        '</select></label>'+
+      '<label class="fld">Access<select id="f-access">'+
+        ['','open','rsvp','invite','paid','members'].map(function(c){return '<option>'+c+'</option>';}).join('')+
+        '</select></label>'+
+      '<label class="fld">Lat<input id="f-lat" placeholder="optional"></label>'+
+      '<label class="fld">Lng<input id="f-lng" placeholder="optional"></label>'+
+      '<label class="fld" style="grid-column:1/-1">Source<input id="f-source" placeholder="fieldnote 2026-10-14 / URL / interview ID"></label>'+
+      '<label class="fld" style="grid-column:1/-1">Notes<textarea id="f-notes" rows="2"></textarea></label>'+
+    '</div>'+
+    '<datalist id="l-net">'+netOpts+'</datalist>'+
+    '<datalist id="l-col"><option value="Roma Norte"><option value="Roma Sur"><option value="Condesa"><option value="Hipódromo"><option value="Hipódromo Condesa"><option value="Juárez"><option value="Doctores"><option value="Escandón"><option value="Nápoles"><option value="Del Valle"></datalist>'+
+    '<div class="row-end"><button class="btn" data-x>Cancel</button><button class="btn primary" id="f-save">Add row</button></div>'
+  );
+  p.querySelector('[data-x]').addEventListener('click', function(){ p.remove(); });
+  p.querySelector('#f-venue').focus();
+  p.querySelector('#f-save').addEventListener('click', function(){
+    var g = function(id){ var el=p.querySelector('#f-'+id); return el ? el.value.trim() : ''; };
+    if(!g('venue')){ p.querySelector('#f-venue').focus(); return; }
+    rows.push({
+      venue:g('venue'), address:g('address'), colonia:g('colonia'),
+      lat:g('lat'), lng:g('lng'), network:g('network')||'Unsorted', event:g('event'),
+      day:g('day'), time:g('time'), cadence:g('cadence'), access:g('access'),
+      source:g('source'), notes:g('notes')
+    });
+    save(); renderNets(); render(); p.remove();
+    status('Row added' + (g('lat')?'':' — press Geocode to place it'));
+  });
+}
+
+function importPanel(){
+  var p = panel(
+    '<h2>Import CSV</h2>'+
+    '<p class="sub">Paste from a spreadsheet or choose a file. A header row is expected; columns are matched by name and extra columns are ignored.</p>'+
+    '<p style="font-size:12px;margin:0 0 10px"><code>'+COLS.join(', ')+'</code></p>'+
+    '<input type="file" id="i-file" accept=".csv,text/csv" style="margin-bottom:10px">'+
+    '<textarea id="i-text" rows="9" placeholder="venue,address,colonia,lat,lng,network,event,day,time,cadence,access,source,notes&#10;Parque México,Av. México s/n,Hipódromo,,,Run clubs,Lunes run,Mon,07:00,weekly,open,fieldnote,"></textarea>'+
+    '<label class="toggle" style="margin-top:10px"><input type="checkbox" id="i-replace"> Replace existing rows instead of appending</label>'+
+    '<div class="row-end"><button class="btn" data-x>Cancel</button><button class="btn primary" id="i-go">Import</button></div>'
+  );
+  p.querySelector('[data-x]').addEventListener('click', function(){ p.remove(); });
+  p.querySelector('#i-file').addEventListener('change', function(e){
+    var f = e.target.files[0]; if(!f) return;
+    var fr = new FileReader();
+    fr.onload = function(){ p.querySelector('#i-text').value = fr.result; };
+    fr.readAsText(f);
+  });
+  p.querySelector('#i-go').addEventListener('click', function(){
+    var txt = p.querySelector('#i-text').value.trim();
+    if(!txt){ p.remove(); return; }
+    var grid = parseCSV(txt);
+    if(grid.length<2){ status('Nothing to import — needs a header row plus at least one data row.'); return; }
+    var head = grid[0].map(function(h){ return h.trim().toLowerCase(); });
+    var fresh = grid.slice(1).map(function(g){
+      var o={};
+      COLS.forEach(function(c){
+        var idx = head.indexOf(c);
+        o[c] = idx>=0 ? String(g[idx]==null?'':g[idx]).trim() : '';
+      });
+      if(!o.network) o.network='Unsorted';
+      return o;
+    }).filter(function(o){ return o.venue || o.event; });
+    if(p.querySelector('#i-replace').checked) rows = fresh;
+    else rows = rows.concat(fresh);
+    save(); renderNets(); render(); p.remove();
+    status('Imported '+fresh.length+' row'+(fresh.length===1?'':'s'));
+  });
+}
+
+function exportPanel(){
+  var p = panel(
+    '<h2>Export</h2><p class="sub">CSV round-trips back into this page and opens in Sheets or Excel. GeoJSON opens in QGIS, kepler.gl, Felt or Datawrapper.</p>'+
+    '<div class="row-end" style="justify-content:flex-start">'+
+      '<button class="btn primary" id="e-csv">CSV (all rows)</button>'+
+      '<button class="btn" id="e-csvv">CSV (filtered view)</button>'+
+      '<button class="btn" id="e-geo">GeoJSON (filtered view)</button>'+
+    '</div>'+
+    '<p class="sub" style="margin:16px 0 6px">Or copy the CSV straight out:</p>'+
+    '<textarea rows="7" id="e-text" readonly></textarea>'+
+    '<div class="row-end"><button class="btn" data-x>Close</button></div>'
+  );
+  p.querySelector('#e-text').value = toCSV(rows);
+  p.querySelector('[data-x]').addEventListener('click', function(){ p.remove(); });
+  p.querySelector('#e-csv').addEventListener('click', function(){
+    download('circuito-roma-condesa.csv', toCSV(rows), 'text/csv;charset=utf-8'); });
+  p.querySelector('#e-csvv').addEventListener('click', function(){
+    download('circuito-filtered.csv', toCSV(visible()), 'text/csv;charset=utf-8'); });
+  p.querySelector('#e-geo').addEventListener('click', function(){
+    download('circuito-roma-condesa.geojson', toGeoJSON(visible()), 'application/geo+json'); });
+}
+
+function helpPanel(){
+  panel(
+    '<h2>Field guide</h2>'+
+    '<p class="sub">How this map is meant to be fed.</p>'+
+    '<ul class="guide">'+
+      '<li><b>One row per event series.</b> A venue becomes a hub because several rows point at it, so the circle grows on its own — don\'t pre-aggregate.</li>'+
+      '<li><b>network</b> is the organizing unit you care about: the collective, host, club or scene that convenes the thing. That column is what the colors and the organizer ties are built from.</li>'+
+      '<li><b>Organizer ties</b> draw each network\'s venues back to the network\'s own centroid. A tight star means a network that stays on a few blocks; a wide one means a network that circulates.</li>'+
+      '<li><b>source</b> should carry provenance: a fieldnote date, an interview ID, or a URL. Keep it filled — it is the difference between a map and an assertion.</li>'+
+      '<li><b>Geocode</b> fills blank lat/lng from the address through OpenStreetMap\'s Nominatim, one row per second, biased to the CDMX bounding box. Verify anything ambiguous; a wrong rooftop is worse than a blank.</li>'+
+      '<li><b>Private addresses.</b> House parties and members-only spaces are where a lot of this actually happens. Consider recording those at block or colonia level rather than door level, and keeping the precise coordinate out of anything you publish.</li>'+
+    '</ul>'+
+    '<p class="sub" style="margin-top:14px">Data lives in this browser only. Export regularly. If geocoding is blocked when you open the file directly, run <code>python3 -m http.server</code> in the folder and load it over <code>localhost</code> instead.</p>'+
+    '<div class="row-end"><button class="btn primary" data-x>Got it</button></div>'
+  ).querySelector('[data-x]').addEventListener('click', function(e){ e.target.closest('.scrim').remove(); });
+}
+
+/* ---------------------------------------------------------------
+   WIRING
+----------------------------------------------------------------*/
+document.getElementById('q').addEventListener('input', function(e){ ui.q=e.target.value; render(); });
+document.getElementById('n-all').addEventListener('click', function(){ ui.offNets={}; renderNets(); render(); });
+document.getElementById('n-none').addEventListener('click', function(){
+  ui.offNets={}; networks().forEach(function(n){ ui.offNets[n]=true; }); renderNets(); render();
+});
+document.getElementById('t-ties').addEventListener('change', function(e){ ui.ties=e.target.checked; render(); });
+document.getElementById('t-size').addEventListener('change', function(e){ ui.size=e.target.checked; render(); });
+document.getElementById('t-lab').addEventListener('change', function(e){ ui.labels=e.target.checked; render(); });
+document.getElementById('b-fit').addEventListener('click', function(){
+  var vs = venues(visible());
+  if(!vs.length){ status('Nothing to zoom to.'); return; }
+  map.fitBounds(L.latLngBounds(vs.map(function(v){ return [v.lat,v.lng]; })).pad(0.18));
+});
+document.getElementById('b-add').addEventListener('click', addPanel);
+document.getElementById('b-import').addEventListener('click', importPanel);
+document.getElementById('b-export').addEventListener('click', exportPanel);
+document.getElementById('b-help').addEventListener('click', helpPanel);
+document.getElementById('b-geo').addEventListener('click', geocodeMissing);
+document.getElementById('b-reset').addEventListener('click', function(){
+  rows = SEED.map(function(r){ return Object.assign({},r); });
+  save(); renderNets(); render(); status('Reset to seed rows');
+});
+document.getElementById('b-theme').addEventListener('click', function(){
+  var cur = document.documentElement.getAttribute('data-theme');
+  var next = cur==='dark' ? 'light' : (cur==='light' ? '' : (isDark()?'light':'dark'));
+  if(next) document.documentElement.setAttribute('data-theme', next);
+  else document.documentElement.removeAttribute('data-theme');
+  retile();
+});
+document.getElementById('rail-toggle').addEventListener('click', function(){
+  var r = document.getElementById('rail'); r.hidden = !r.hidden;
+});
+
+function setView(v){
+  ui.view = v;
+  document.getElementById('v-map').setAttribute('aria-pressed', v==='map');
+  document.getElementById('v-tab').setAttribute('aria-pressed', v==='tab');
+  document.getElementById('map').hidden = (v!=='map');
+  document.getElementById('table-wrap').hidden = (v!=='tab');
+  render();
+  if(v==='map') setTimeout(function(){ map.invalidateSize(); }, 30);
+}
+document.getElementById('v-map').addEventListener('click', function(){ setView('map'); });
+document.getElementById('v-tab').addEventListener('click', function(){ setView('tab'); });
+
+var bmSel = document.getElementById('basemap');
+bmSel.value = bmKey;
+bmSel.addEventListener('change', function(e){
+  bmKey = e.target.value;
+  applyBasemap();
+  status('Basemap: '+BASEMAPS[bmKey].name);
+});
+
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', retile);
+
+load();
+applyBasemap();
+retile();
+renderNets();
+renderDays();
+render();
+if(window.innerWidth<=820) document.getElementById('rail').hidden = true;
+})();
+</script>
+</body>
+</html>
