@@ -236,7 +236,6 @@ textarea{resize:vertical;font-family:var(--font-data);font-size:12px;line-height
     <button id="v-tab" aria-pressed="false">Data</button>
   </div>
   <div class="tools">
-    <button class="btn primary" id="b-add">Add event</button>
     <button class="btn" id="b-import">Import CSV</button>
     <button class="btn" id="b-reload" hidden>Reload sheet</button>
     <button class="btn" id="b-geo">Geocode</button>
@@ -1034,6 +1033,11 @@ function drawTies(list){
    RENDER: RAIL
 ----------------------------------------------------------------*/
 function renderNets(){
+  /* "Unsorted" is the fallback label for rows with a blank network, not a
+     network anyone chose, so it gets no toggle. Clearing its off-state here
+     covers every route that could set it — including the None button, which
+     would otherwise hide those rows with no control left to bring them back. */
+  delete ui.offNets['Unsorted'];
   var nets = networks();
   var counts = {};
   rows.forEach(function(r){
@@ -1042,6 +1046,7 @@ function renderNets(){
   var box = document.getElementById('nets');
   box.innerHTML = '';
   nets.forEach(function(n){
+    if(n === 'Unsorted') return;   // no toggle; those rows stay on the map
     var lab = document.createElement('label');
     lab.className = 'net' + (ui.offNets[n]?' off':'');
     lab.innerHTML = '<input type="checkbox"'+(ui.offNets[n]?'':' checked')+'>'+
@@ -1162,7 +1167,11 @@ function renderDays(){
 function renderStats(list, vs){
   document.getElementById('s-ven').textContent = vs.length;
   document.getElementById('s-ev').textContent = list.length;
-  var ns={}; list.forEach(function(r){ ns[(r.network||'Unsorted').trim()||'Unsorted']=1; });
+  // Count only real networks, so this agrees with the list underneath it;
+  // rows with a blank network are not a seventh network.
+  var ns={}; list.forEach(function(r){
+    var n=(r.network||'').trim(); if(n) ns[n]=1;
+  });
   document.getElementById('s-net').textContent = Object.keys(ns).length;
 
   var hist = DAYS.map(function(d){ return list.filter(function(r){ return (r.day||'').trim()===d; }).length; });
@@ -1693,8 +1702,10 @@ function applyMode(){
   var f = formUrl();
   document.getElementById('b-import').hidden = connected;
   document.getElementById('b-reload').hidden = !connected;
+  // The add button is out of the header for now. Kept null-safe so restoring
+  // it is one line of markup rather than a hunt through the wiring.
   var add = document.getElementById('b-add');
-  add.textContent = connected ? (f ? 'Submit a venue' : 'Add in the sheet') : 'Add event';
+  if(add) add.textContent = connected ? (f ? 'Submit a venue' : 'Add in the sheet') : 'Add event';
   document.getElementById('b-geo').textContent = connected ? 'Fill coords' : 'Geocode';
   document.getElementById('b-reset').hidden = connected;
   var src = document.getElementById('src-note');
@@ -1768,7 +1779,8 @@ document.getElementById('b-fit').addEventListener('click', function(){
   if(!vs.length){ status('Nothing to zoom to.'); return; }
   map.fitBounds(L.latLngBounds(vs.map(function(v){ return [v.lat,v.lng]; })).pad(0.18));
 });
-document.getElementById('b-add').addEventListener('click', function(){
+var addBtn = document.getElementById('b-add');
+if(addBtn) addBtn.addEventListener('click', function(){
   if(!sheetMode){ addPanel(); return; }
   var f = formUrl();
   if(f) window.open(f, '_blank', 'noopener');
