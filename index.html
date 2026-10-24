@@ -464,7 +464,9 @@ var PALETTE = ['#D81B60','#2D7DD2','#E8A33D','#2F9E6E','#8A5CF5','#D9544D','#15A
 var rows = [];
 var netColor = {};
 var ui = {
-  q:'', offNets:{}, offDays:{}, offExtras:{}, colorBy:'network', shapeBy:'', sortFilters:'az',
+  // colorBy falls back to 'network' in renderColorBy if the sheet has no
+  // 'layer' column, so this is safe before the data has loaded.
+  q:'', offNets:{}, offDays:{}, offExtras:{}, colorBy:'layer', shapeBy:'', sortFilters:'az',
   ties:false, size:true, labels:false, view:'map',
   airbnb:false, abMetric:'density'
 };
@@ -716,9 +718,13 @@ var BASEMAPS = {
   }
 };
 var FILE_MODE = (location.protocol === 'file:');
-var bmKey = 'esri';
-try{ bmKey = localStorage.getItem(STORE+'-basemap') || 'esri'; }catch(e){}
-if(!BASEMAPS[bmKey]) bmKey = 'esri';
+/* v2 key: the old one was written on every load, so it holds a basemap nobody
+   picked. Starting a fresh key lets this default through and keeps the stored
+   value meaning "the reader chose this". */
+var BM_DEFAULT = 'osm';
+var bmKey = BM_DEFAULT;
+try{ bmKey = localStorage.getItem(STORE+'-basemap-v2') || BM_DEFAULT; }catch(e){}
+if(!BASEMAPS[bmKey]) bmKey = BM_DEFAULT;
 /* Opened straight from disk there is no Referer header, and the OSM servers
    reject refererless requests outright. Don't start on one of those. */
 if(FILE_MODE && BASEMAPS[bmKey].needsReferer) bmKey = 'esri';
@@ -747,7 +753,10 @@ function applyBasemap(){
   tiles.on('load', function(){ hideTileWarning(); });
   tiles.addTo(map);
   tiles.bringToBack();
-  try{ localStorage.setItem(STORE+'-basemap', bmKey); }catch(e){}
+  /* Deliberately not saved here. This runs for the automatic file:// fallback
+     too, which would otherwise persist Esri as a preference and override the
+     default once the page is back on a real domain. Only an explicit pick
+     from the dropdown is stored. */
 }
 
 function hideTileWarning(){ document.getElementById('tilewarn').hidden = true; }
@@ -1862,6 +1871,7 @@ var bmSel = document.getElementById('basemap');
 bmSel.value = bmKey;
 bmSel.addEventListener('change', function(e){
   bmKey = e.target.value;
+  try{ localStorage.setItem(STORE+'-basemap-v2', bmKey); }catch(err){}
   applyBasemap();
   status('Basemap: '+BASEMAPS[bmKey].name);
 });
