@@ -264,6 +264,12 @@ textarea{resize:vertical;font-family:var(--font-data);font-size:12px;line-height
       <label class="toggle"><input type="checkbox" id="t-ties"> Draw organizer ties</label>
       <label class="toggle"><input type="checkbox" id="t-size" checked> Size venues by event count</label>
       <label class="toggle"><input type="checkbox" id="t-lab"> Always show venue labels</label>
+      <label class="fld" style="margin-top:4px">Sort the filter lists
+        <select id="sortfilters">
+          <option value="az">A \u2013 Z</option>
+          <option value="count">most entries first</option>
+        </select>
+      </label>
       <label class="fld" style="margin-top:4px">Colour the map by
         <select id="colorby"><option value="network">network</option></select>
       </label>
@@ -425,7 +431,7 @@ var PALETTE = ['#D81B60','#2D7DD2','#E8A33D','#2F9E6E','#8A5CF5','#D9544D','#15A
 var rows = [];
 var netColor = {};
 var ui = {
-  q:'', offNets:{}, offDays:{}, offExtras:{}, colorBy:'network', shapeBy:'',
+  q:'', offNets:{}, offDays:{}, offExtras:{}, colorBy:'network', shapeBy:'', sortFilters:'az',
   ties:false, size:true, labels:false, view:'map'
 };
 
@@ -458,7 +464,12 @@ function extraFields(){
   Object.keys(seen).forEach(function(f){
     var vals = Object.keys(seen[f]);
     if(vals.length === 0 || vals.length > EXTRA_MAX_VALUES) return;  // free text
-    vals.sort(function(a,b){ return seen[f][b] - seen[f][a] || a.localeCompare(b); });
+    // A–Z reads like an index; by-count puts the busiest categories on top.
+    if(ui.sortFilters === 'count'){
+      vals.sort(function(a,b){ return seen[f][b] - seen[f][a] || a.localeCompare(b,'es'); });
+    } else {
+      vals.sort(function(a,b){ return a.localeCompare(b,'es'); });
+    }
     out[f] = vals;
   });
   return out;
@@ -760,7 +771,7 @@ function networks(){
     var n = (r.network||'Unsorted').trim() || 'Unsorted';
     if(seen.indexOf(n)<0) seen.push(n);
   });
-  seen.sort();
+  seen.sort(function(a,b){ return a.localeCompare(b,'es'); });
   seen.forEach(function(n,i){ if(!netColor[n]) netColor[n] = PALETTE[i % PALETTE.length]; });
   return seen;
 }
@@ -1049,6 +1060,7 @@ function renderColorBy(fields){
 function renderExtras(){
   var box = document.getElementById('extras');
   var fields = extraFields();
+  document.getElementById('sortfilters').value = ui.sortFilters;
   renderColorBy(fields);
   renderShapeBy(fields);
   colorDomain();
@@ -1607,6 +1619,11 @@ function setView(v){
 }
 document.getElementById('v-map').addEventListener('click', function(){ setView('map'); });
 document.getElementById('v-tab').addEventListener('click', function(){ setView('tab'); });
+
+document.getElementById('sortfilters').addEventListener('change', function(e){
+  ui.sortFilters = e.target.value;
+  renderNets();
+});
 
 document.getElementById('shapeby').addEventListener('change', function(e){
   ui.shapeBy = e.target.value;
