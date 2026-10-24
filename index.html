@@ -118,6 +118,9 @@ main{flex:1;display:flex;min-height:0;position:relative}
 /* ---------- map ---------- */
 #map{flex:1;min-width:0;background:var(--surface-2)}
 .leaflet-container{font-family:var(--font-ui);background:var(--surface-2)}
+.shape-marker{background:none;border:none}
+#shapelegend{display:flex;flex-direction:column;gap:2px;margin-top:2px}
+#shapelegend svg{display:block}
 /* No keyless provider ships a dark basemap, so darken the tiles themselves.
    Only the tile pane is filtered; markers and ties keep their real colors. */
 #map.dark-tiles .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.88) saturate(.7)}
@@ -233,7 +236,7 @@ textarea{resize:vertical;font-family:var(--font-data);font-size:12px;line-height
       <input id="q" type="search" placeholder="venue, event, organizer, note…">
       <div class="stats">
         <div class="stat"><b id="s-ven">0</b><span>Venues</span></div>
-        <div class="stat"><b id="s-ev">0</b><span>Events</span></div>
+        <div class="stat"><b id="s-ev">0</b><span>Entries</span></div>
         <div class="stat"><b id="s-net">0</b><span>Networks</span></div>
       </div>
     </div>
@@ -261,6 +264,13 @@ textarea{resize:vertical;font-family:var(--font-data);font-size:12px;line-height
       <label class="toggle"><input type="checkbox" id="t-ties"> Draw organizer ties</label>
       <label class="toggle"><input type="checkbox" id="t-size" checked> Size venues by event count</label>
       <label class="toggle"><input type="checkbox" id="t-lab"> Always show venue labels</label>
+      <label class="fld" style="margin-top:4px">Colour the map by
+        <select id="colorby"><option value="network">network</option></select>
+      </label>
+      <label class="fld" style="margin-top:4px">Marker shape by
+        <select id="shapeby"><option value="">(all circles)</option></select>
+      </label>
+      <div id="shapelegend" hidden></div>
       <label class="fld" style="margin-top:4px">Basemap
         <select id="basemap">
           <option value="esri">Esri Light Gray</option>
@@ -312,7 +322,7 @@ var SEED_STAMP = 'working-copy';
    appear without anyone republishing the file. Both URLs are baked
    into the published copy, so the hosted map stays connected.
 ----------------------------------------------------------------*/
-var SHEET_URL = 'https://docs.google.com/spreadsheets/d/1cTsBNs9sIFO3AXHJUwVcVkaPlXgH3vdA8RGgpg6sDXM/edit?gid=1960038550#gid=1960038550';   // published Google Sheet, CSV output
+var SHEET_URL = '';   // published Google Sheet, CSV output
 var FORM_URL  = '';   // Google Form collaborators submit through
 
 function sheetUrl(){
@@ -415,7 +425,7 @@ var PALETTE = ['#D81B60','#2D7DD2','#E8A33D','#2F9E6E','#8A5CF5','#D9544D','#15A
 var rows = [];
 var netColor = {};
 var ui = {
-  q:'', offNets:{}, offDays:{}, offExtras:{},
+  q:'', offNets:{}, offDays:{}, offExtras:{}, colorBy:'network', shapeBy:'',
   ties:false, size:true, labels:false, view:'map'
 };
 
@@ -754,7 +764,82 @@ function networks(){
   seen.forEach(function(n,i){ if(!netColor[n]) netColor[n] = PALETTE[i % PALETTE.length]; });
   return seen;
 }
+
+/* Which column drives the colours. Defaults to network; any categorical
+   column the sheet adds can take over. */
+function colorKey(r){
+  if(ui.colorBy === 'network') return (r.network||'Unsorted').trim() || 'Unsorted';
+  var v = extraValues(r, ui.colorBy);
+  return v.length ? v[0] : 'Unsorted';
+}
+function colorDomain(){
+  var seen = [];
+  rows.forEach(function(r){
+    var k = colorKey(r);
+    if(seen.indexOf(k) < 0) seen.push(k);
+  });
+  seen.sort();
+  seen.forEach(function(k,i){ if(!netColor[k]) netColor[k] = PALETTE[i % PALETTE.length]; });
+  return seen;
+}
 function colorOf(n){ return netColor[(n||'Unsorted').trim()||'Unsorted'] || '#888'; }
+
+/* ---------------------------------------------------------------
+   SHAPE
+   Colour already carries one dimension (usually network), so a second
+   dimension — what kind of place this is: event, hostel, co-working —
+   is drawn as marker shape instead. Any categorical column can drive it.
+----------------------------------------------------------------*/
+var SHAPES = ['circle','square','triangle','diamond','pentagon','hexagon'];
+var shapeOf = {};
+
+function shapeKey(r){
+  if(!ui.shapeBy) return '';
+  var v = extraValues(r, ui.shapeBy);
+  return v.length ? v[0] : 'Unsorted';
+}
+function shapeDomain(){
+  if(!ui.shapeBy) return [];
+  var seen = [];
+  rows.forEach(function(r){
+    var k = shapeKey(r);
+    if(k && seen.indexOf(k) < 0) seen.push(k);
+  });
+  seen.sort();
+  seen.forEach(function(k,i){ shapeOf[k] = SHAPES[i % SHAPES.length]; });
+  return seen;
+}
+function shapeFor(k){ return shapeOf[k] || 'circle'; }
+
+/* An SVG marker of the given shape, sized like the circle it replaces. */
+function shapeSVG(shape, rad, fill){
+  var s = Math.ceil(rad*2) + 4, c = s/2, R = rad;
+  function poly(n, rot){
+    var pts = [];
+    for(var i=0;i<n;i++){
+      var a = rot + i*2*Math.PI/n;
+      pts.push((c + R*Math.cos(a)).toFixed(2) + ',' + (c + R*Math.sin(a)).toFixed(2));
+    }
+    return pts.join(' ');
+  }
+  var attr = 'fill="'+fill+'" fill-opacity="0.82" stroke="#ffffff" stroke-width="1.6" stroke-opacity="0.85"';
+  var body;
+  if(shape === 'square'){
+    var d = R*0.88;
+    body = '<rect x="'+(c-d)+'" y="'+(c-d)+'" width="'+(d*2)+'" height="'+(d*2)+'" rx="'+(R*0.18)+'" '+attr+'/>';
+  } else if(shape === 'triangle'){
+    body = '<polygon points="'+poly(3, -Math.PI/2)+'" '+attr+'/>';
+  } else if(shape === 'diamond'){
+    body = '<polygon points="'+poly(4, -Math.PI/2)+'" '+attr+'/>';
+  } else if(shape === 'pentagon'){
+    body = '<polygon points="'+poly(5, -Math.PI/2)+'" '+attr+'/>';
+  } else if(shape === 'hexagon'){
+    body = '<polygon points="'+poly(6, -Math.PI/2)+'" '+attr+'/>';
+  } else {
+    body = '<circle cx="'+c+'" cy="'+c+'" r="'+R+'" '+attr+'/>';
+  }
+  return {html:'<svg width="'+s+'" height="'+s+'" viewBox="0 0 '+s+' '+s+'">'+body+'</svg>', size:s};
+}
 
 function visible(){
   var q = ui.q.toLowerCase().trim();
@@ -807,14 +892,27 @@ function drawMap(){
     var r = ui.size ? Math.min(24, 7 + Math.sqrt(n)*4.2) : 8;
     var top = {};
     v.events.forEach(function(e){
-      var k=(e.network||'Unsorted').trim()||'Unsorted'; top[k]=(top[k]||0)+1;
+      var k = colorKey(e); top[k]=(top[k]||0)+1;
     });
     var domin = Object.keys(top).sort(function(a,b){return top[b]-top[a];})[0];
 
-    var mk = L.circleMarker([v.lat,v.lng],{
-      radius:r, color:'#ffffff', weight:1.6, opacity:.85,
-      fillColor:colorOf(domin), fillOpacity:.82
-    });
+    var mk;
+    if(ui.shapeBy){
+      // Shape carries the layer; colour still carries the colour-by column.
+      var sk = {};
+      v.events.forEach(function(e){ var k = shapeKey(e); if(k) sk[k]=(sk[k]||0)+1; });
+      var domShape = Object.keys(sk).sort(function(a,b){return sk[b]-sk[a];})[0];
+      var svg = shapeSVG(shapeFor(domShape), r, colorOf(domin));
+      mk = L.marker([v.lat,v.lng], {icon: L.divIcon({
+        html: svg.html, className: 'shape-marker',
+        iconSize: [svg.size, svg.size], iconAnchor: [svg.size/2, svg.size/2]
+      })});
+    } else {
+      mk = L.circleMarker([v.lat,v.lng],{
+        radius:r, color:'#ffffff', weight:1.6, opacity:.85,
+        fillColor:colorOf(domin), fillOpacity:.82
+      });
+    }
 
     var html = '<div class="pop"><h3>'+esc(v.venue)+'</h3>'+
       '<div class="addr">'+esc(v.address||'')+(v.colonia?' · '+esc(v.colonia):'')+'</div><ul>';
@@ -828,7 +926,7 @@ function drawMap(){
         });
         if(parts.length) xtra = '<div class="meta">'+parts.join(' · ')+'</div>';
       }
-      html += '<li style="--ev:'+colorOf(e.network)+'">'+
+      html += '<li style="--ev:'+colorOf(colorKey(e))+'">'+
         '<div class="ev">'+esc(e.event||'(untitled)')+'</div>'+
         '<div class="meta">'+esc((e.network||'Unsorted'))+(meta?' — '+esc(meta):'')+'</div>'+
         xtra+
@@ -840,10 +938,13 @@ function drawMap(){
     html += '</ul></div>';
     mk.bindPopup(html,{maxWidth:320});
 
+    var unit = n===1 ? ' entry' : ' entries';
     if(ui.labels){
-      mk.bindTooltip(v.venue,{permanent:true,direction:'top',offset:[0,-r-2],className:'vlabel'});
+      mk.bindTooltip(v.venue,{permanent:true,direction:'top',
+        offset:[0, ui.shapeBy ? -2 : -r-2], className:'vlabel'});
     }else{
-      mk.bindTooltip(v.venue+' · '+n+(n===1?' event':' events'),{direction:'top'});
+      mk.bindTooltip(v.venue+' · '+n+unit,{direction:'top',
+        offset:[0, ui.shapeBy ? -2 : -r-2]});
     }
     venueLayer.addLayer(mk);
   });
@@ -856,7 +957,7 @@ function drawTies(list){
   var byNet = {};
   list.forEach(function(r){
     if(!isFinite(parseFloat(r.lat))||!isFinite(parseFloat(r.lng))) return;
-    var n=(r.network||'Unsorted').trim()||'Unsorted';
+    var n = colorKey(r);
     (byNet[n]=byNet[n]||[]).push([parseFloat(r.lat),parseFloat(r.lng)]);
   });
   Object.keys(byNet).forEach(function(n){
@@ -895,7 +996,7 @@ function renderNets(){
     var lab = document.createElement('label');
     lab.className = 'net' + (ui.offNets[n]?' off':'');
     lab.innerHTML = '<input type="checkbox"'+(ui.offNets[n]?'':' checked')+'>'+
-      '<span class="dot" style="background:'+colorOf(n)+'"></span>'+
+      (ui.colorBy === 'network' ? '<span class="dot" style="background:'+colorOf(n)+'"></span>' : '')+
       '<span class="nm">'+esc(n)+'</span><span class="ct">'+(counts[n]||0)+'</span>';
     lab.querySelector('input').addEventListener('change',function(e){
       if(e.target.checked) delete ui.offNets[n]; else ui.offNets[n]=true;
@@ -905,10 +1006,52 @@ function renderNets(){
   });
   renderExtras();   // keep the user-added column filters in step with the data
 }
+/* Shape-by choices, plus a legend so the shapes are readable. */
+function renderShapeBy(fields){
+  var sel = document.getElementById('shapeby');
+  var want = [''].concat(Object.keys(fields).sort());
+  if(want.indexOf(ui.shapeBy) < 0) ui.shapeBy = '';
+  var have = Array.prototype.map.call(sel.options, function(o){ return o.value; });
+  if(have.join('|') !== want.join('|')){
+    sel.innerHTML = want.map(function(v){
+      return '<option value="'+esc(v)+'">'+(v ? esc(v) : '(all circles)')+'</option>';
+    }).join('');
+  }
+  sel.value = ui.shapeBy;
+
+  var box = document.getElementById('shapelegend');
+  var dom = shapeDomain();
+  if(!ui.shapeBy || !dom.length){ box.hidden = true; box.innerHTML = ''; return; }
+  box.hidden = false;
+  box.innerHTML = dom.map(function(k){
+    var svg = shapeSVG(shapeFor(k), 7, 'var(--muted)');
+    return '<div class="net" style="cursor:default">'+
+      '<span style="width:20px;display:inline-flex;justify-content:center">'+svg.html+'</span>'+
+      '<span class="nm">'+esc(k)+'</span></div>';
+  }).join('');
+}
+
+/* Keeps the colour-by choices in step with whatever columns the sheet has. */
+function renderColorBy(fields){
+  var sel = document.getElementById('colorby');
+  var want = ['network'].concat(Object.keys(fields).sort());
+  if(want.indexOf(ui.colorBy) < 0) ui.colorBy = 'network';
+  var have = Array.prototype.map.call(sel.options, function(o){ return o.value; });
+  if(have.join('|') !== want.join('|')){
+    sel.innerHTML = want.map(function(v){
+      return '<option value="'+esc(v)+'">'+esc(v)+'</option>';
+    }).join('');
+  }
+  sel.value = ui.colorBy;
+}
+
 /* One filter group per user-added column, rebuilt whenever the data changes. */
 function renderExtras(){
   var box = document.getElementById('extras');
   var fields = extraFields();
+  renderColorBy(fields);
+  renderShapeBy(fields);
+  colorDomain();
   box.innerHTML = '';
   Object.keys(fields).sort().forEach(function(f){
     if(!ui.offExtras[f]) ui.offExtras[f] = {};
@@ -923,6 +1066,7 @@ function renderExtras(){
       var lab = document.createElement('label');
       lab.className = 'net' + (ui.offExtras[f][v] ? ' off' : '');
       lab.innerHTML = '<input type="checkbox"'+(ui.offExtras[f][v]?'':' checked')+'>'+
+        (ui.colorBy === f ? '<span class="dot" style="background:'+colorOf(v)+'"></span>' : '')+
         '<span class="nm">'+esc(v)+'</span>'+
         '<span class="ct">'+(counts[v]||0)+'</span>';
       lab.querySelector('input').addEventListener('change', function(e){
@@ -1463,6 +1607,19 @@ function setView(v){
 }
 document.getElementById('v-map').addEventListener('click', function(){ setView('map'); });
 document.getElementById('v-tab').addEventListener('click', function(){ setView('tab'); });
+
+document.getElementById('shapeby').addEventListener('change', function(e){
+  ui.shapeBy = e.target.value;
+  renderNets();     // rebuilds the legend too
+  render();
+});
+
+document.getElementById('colorby').addEventListener('change', function(e){
+  ui.colorBy = e.target.value;
+  colorDomain();
+  renderNets();     // also rebuilds the extra groups, moving the swatches
+  render();
+});
 
 var bmSel = document.getElementById('basemap');
 bmSel.value = bmKey;
