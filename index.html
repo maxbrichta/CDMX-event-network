@@ -464,9 +464,13 @@ var PALETTE = ['#D81B60','#2D7DD2','#E8A33D','#2F9E6E','#8A5CF5','#D9544D','#15A
 var rows = [];
 var netColor = {};
 var ui = {
-  // colorBy falls back to 'network' in renderColorBy if the sheet has no
-  // 'layer' column, so this is safe before the data has loaded.
-  q:'', offNets:{}, offDays:{}, offExtras:{}, colorBy:'layer', shapeBy:'', sortFilters:'az',
+  /* colorBy is what the map is actually using right now; colorByWant is what
+     it should use as soon as that column exists. They differ during boot:
+     the baked seed rows carry no 'layer' column, so the first paint has to
+     fall back to 'network', and the sheet supplies 'layer' a moment later.
+     Keeping the wish separate is what lets the default land then. */
+  q:'', offNets:{}, offDays:{}, offExtras:{},
+  colorBy:'layer', colorByWant:'layer', shapeBy:'', sortFilters:'az',
   ties:false, size:true, labels:false, view:'map',
   airbnb:false, abMetric:'density'
 };
@@ -1047,6 +1051,7 @@ function renderNets(){
      covers every route that could set it — including the None button, which
      would otherwise hide those rows with no control left to bring them back. */
   delete ui.offNets['Unsorted'];
+  resolveColorBy();   // before any swatch is drawn — see the note on that function
   var nets = networks();
   var counts = {};
   rows.forEach(function(r){
@@ -1094,11 +1099,23 @@ function renderShapeBy(fields){
   }).join('');
 }
 
+/* Settles which column the colours come from, before anything paints.
+   It has to run first: renderNets draws the network swatches and only then
+   calls renderExtras, so resolving this late would put the swatches in two
+   filter groups at once for the rest of the paint.
+   Takes the wanted column the moment it turns up rather than overwriting the
+   wish with the fallback, or a default absent from the seed rows could never
+   survive the first paint. */
+function resolveColorBy(){
+  var want = ['network'].concat(Object.keys(extraFields()).sort());
+  if(want.indexOf(ui.colorByWant) >= 0) ui.colorBy = ui.colorByWant;
+  else if(want.indexOf(ui.colorBy) < 0) ui.colorBy = 'network';
+}
+
 /* Keeps the colour-by choices in step with whatever columns the sheet has. */
 function renderColorBy(fields){
   var sel = document.getElementById('colorby');
   var want = ['network'].concat(Object.keys(fields).sort());
-  if(want.indexOf(ui.colorBy) < 0) ui.colorBy = 'network';
   var have = Array.prototype.map.call(sel.options, function(o){ return o.value; });
   if(have.join('|') !== want.join('|')){
     sel.innerHTML = want.map(function(v){
@@ -1842,7 +1859,9 @@ document.getElementById('shapeby').addEventListener('change', function(e){
 });
 
 document.getElementById('colorby').addEventListener('change', function(e){
-  ui.colorBy = e.target.value;
+  // Record the pick as the new wish too, or the next rebuild would snap the
+  // dropdown back to the default.
+  ui.colorBy = ui.colorByWant = e.target.value;
   colorDomain();
   renderNets();     // also rebuilds the extra groups, moving the swatches
   render();
